@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PhucTran auto comment</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --rose-50: #fff5fb;
+      --rose-100: #ffe6f4;
+      --rose-200: #ffc7e6;
+      --rose-300: #ff9dd2;
+      --rose-400: #ff73bd;
+      --rose-500: #ef4ba5;
+      --rose-600: #d52e8a;
+      --rose-700: #ac1e6f;
+      --ink-700: #4b1f3c;
+      --ink-500: #744563;
+      --surface: #fffafe;
+      --border: #f4c5df;
+      --shadow: 0 14px 30px rgba(170, 41, 108, 0.2);
+      --ring: 0 0 0 3px rgba(239, 75, 165, 0.2);
+    }
+
+    body {
+      width: 520px;
+      min-height: 460px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background:
+        radial-gradient(1200px 480px at -10% -10%, #ffd6ed 0%, transparent 40%),
+        radial-gradient(900px 420px at 100% -20%, #ffd1e8 0%, transparent 44%),
+        linear-gradient(180deg, #fff7fc 0%, #ffeef8 100%);
+      color: var(--ink-700);
+    }
+
+    h2 {
+      margin: 0;
+      padding: 16px 18px 14px;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      background: linear-gradient(135deg, #fff 0%, #ffe6f4 100%);
+      border-bottom: 1px solid var(--border);
+      color: #8d1459;
+    }
+
+    .tabs {
+      display: flex;
+      background: linear-gradient(180deg, #fff 0%, #fff7fc 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 0 10px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 12px 10px;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: #9d5c80;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      cursor: pointer;
+      transition: color 0.2s, background 0.2s;
+    }
+
+    .tab:hover {
+      color: #8d1459;
+      background: #fff3fa;
+    }
+
+    .tab.active {
+      color: var(--rose-700);
+      border-bottom-color: var(--rose-500);
+    }
+
+    .container {
+      margin: 12px;
+      padding: 16px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #ffffff 0%, var(--surface) 100%);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .section-title {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      color: var(--ink-700);
+      font-weight: 700;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #f6badc;
+      background: #fff;
+      color: #5d2647;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+
+    textarea {
+      min-height: 84px;
+      resize: vertical;
+      background: #fff8fd;
+    }
+
+    input:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--rose-500);
+      box-shadow: var(--ring);
+      background: #fff;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      color: #b47799;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: linear-gradient(180deg, var(--rose-500) 0%, var(--rose-600) 100%);
+      color: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+      transition: transform 0.15s, box-shadow 0.2s, filter 0.2s;
+      margin-bottom: 8px;
+      box-shadow: 0 8px 16px rgba(213, 46, 138, 0.24);
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      filter: brightness(1.03);
+      box-shadow: 0 10px 20px rgba(213, 46, 138, 0.3);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .button-group button {
+      margin-bottom: 0;
+    }
+
+    #nextBtn {
+      background: linear-gradient(180deg, #b16995 0%, #8f4f78 100%);
+      box-shadow: 0 8px 16px rgba(143, 79, 120, 0.22);
+    }
+
+    #nextBtn:hover:not(:disabled) {
+      box-shadow: 0 10px 20px rgba(143, 79, 120, 0.28);
+    }
+
+    #status {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #f6badc;
+      background: linear-gradient(180deg, #fff7fd 0%, #ffeef8 100%);
+      color: #7c305c;
+      font-size: 12px;
+      line-height: 1.4;
+      min-height: 38px;
+    }
+
+    .hint {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--ink-500);
+      line-height: 1.4;
+    }
+
+    .upload-panel {
+      margin-bottom: 10px;
+      padding: 10px;
+      border: 1px dashed #f1a9d0;
+      border-radius: 10px;
+      background: #fff7fc;
+    }
+
+    .upload-panel .upload-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .upload-panel .upload-actions button {
+      margin-bottom: 0;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+
+    .paste-area {
+      border: 1px solid #f4c5df;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 11px;
+      color: #8b4a70;
+      background: #fff;
+      text-align: center;
+    }
+
+    .paste-area.active {
+      border-color: var(--rose-500);
+      box-shadow: var(--ring);
+    }
+
+    #uploadStatus {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #8b4a70;
+      min-height: 16px;
+    }
+
+    .api-panel {
+      margin-bottom: 12px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #f4c5df;
+      background: linear-gradient(180deg, #fff9fd 0%, #fff1f9 100%);
+    }
+
+    .api-panel .api-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .api-panel .api-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8d1459;
+    }
+
+    #getApiBtn {
+      width: auto;
+      min-width: 112px;
+      margin-bottom: 0;
+      padding: 7px 10px;
+      font-size: 12px;
+      border-radius: 8px;
+    }
+
+    #apiStatus {
+      font-size: 11px;
+      color: #7c305c;
+      line-height: 1.45;
+      white-space: pre-line;
+      word-break: break-word;
+    }
+
+    .guide-list {
+      margin-left: 18px;
+      color: #7c305c;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .guide-list li {
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h2>PhucTran auto comment</h2>
+  <div class="tabs">
+    <button class="tab active" data-tab="comment">CMT Tools</button>
+    <button class="tab" data-tab="smartskip">Smart Skip</button>
+    <button class="tab" data-tab="getapi">GET API</button>
+    <button class="tab" data-tab="guide">HƯỚNG DẪN</button>
+  </div>
+
+  <div id="commentTab" class="tab-content active">
+    <div class="container">
+      <div class="section-title">Nhập thông tin để tạo comment</div>
+      <textarea id="description" placeholder="Mô tả (bắt buộc)" rows="3"></textarea>
+
+      <div class="field-grid">
+        <input type="text" id="fees" placeholder="Tiền dịch vụ, tiền xe, tiền điện">
+        <input type="text" id="price" placeholder="Giá">
+        <input type="text" id="amenities" placeholder="Tiện nghi">
+        <input type="text" id="images" placeholder="Hình ảnh">
+      </div>
+
+      <input type="text" id="contactPhone" placeholder="SĐT liên lạc (tùy chọn)">
+
+      <div class="upload-panel">
+        <div class="upload-actions">
+          <button id="pickImagesBtn" type="button">Chọn ảnh từ máy</button>
+        </div>
+        <input id="imageFileInput" type="file" accept="image/*" multiple style="display:none;">
+        <div id="pasteArea" class="paste-area" tabindex="0">Bạn có thể Ctrl+V trực tiếp trong ô Hình ảnh hoặc dán tại đây</div>
+        <div id="uploadStatus"></div>
+      </div>
+
+      <input type="number" id="numPosts" placeholder="Số post" min="1" max="10">
+
+      <div class="button-group">
+        <button id="startBtn">Bắt đầu điền comment</button>
+        <button id="nextBtn" disabled>Điền comment tiếp theo</button>
+      </div>
+
+      <div id="status"></div>
+      <div class="hint">Mẹo: Extension sẽ tự né post đã xử lý ngay cả khi bạn reload trang.</div>
+    </div>
+  </div>
+
+  <div id="smartskipTab" class="tab-content">
+    <div class="container">
+      <div class="section-title">BỎ QUA THÔNG MINH</div>
+      <div class="hint">
+        Tính năng này đang bật tự động.
+        Extension sẽ lưu dấu bài viết đã xử lý và tự bỏ qua khi bạn bấm điền tiếp, kể cả sau khi reload trang.
+      </div>
+      <div class="button-group" style="margin-top: 10px;">
+        <button id="resetSkipBtn" type="button">Đặt lại lịch sử bỏ qua</button>
+      </div>
+      <div id="skipStatus" class="hint"></div>
+    </div>
+  </div>
+
+  <div id="getapiTab" class="tab-content">
+    <div class="container">
+      <div class="api-panel" style="margin-bottom: 0;">
+        <div class="api-head">
+          <div class="api-title">GET API - Kiểm tra trang hiện tại</div>
+          <button id="getApiBtn" type="button">Kiểm tra</button>
+        </div>
+        <div id="apiStatus">Chưa kiểm tra.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="guideTab" class="tab-content">
+    <div class="container">
+      <div class="section-title">Hướng dẫn từng ô</div>
+      <ul class="guide-list">
+        <li><strong>Mô tả (bắt buộc):</strong> Nhập nội dung chính của bài đăng.</li>
+        <li><strong>Tiền dịch vụ, tiền xe, tiền điện:</strong> Nhập trong 1 ô, ngăn cách dấu phẩy. Ví dụ: <strong>200k, 100k, 3.5k/số</strong>.</li>
+        <li><strong>Giá:</strong> Ví dụ <strong>3tr2/tháng</strong> hoặc <strong>3.200.000</strong>.</li>
+        <li><strong>Tiện nghi:</strong> Ví dụ <strong>máy lạnh, tủ lạnh, WC riêng</strong>.</li>
+        <li><strong>Hình ảnh:</strong> Dán link ảnh, hoặc Ctrl+V ảnh trực tiếp để extension tự upload và chèn link.</li>
+        <li><strong>SĐT liên lạc:</strong> Ví dụ <strong>09xxxxxxxx</strong>. Bỏ trống nếu không muốn hiện.</li>
+        <li><strong>Số post:</strong> Số lượng comment cần điền.</li>
+        <li><strong>Nút Bắt đầu điền comment:</strong> Điền comment đầu tiên.</li>
+        <li><strong>Nút Điền comment tiếp theo:</strong> Điền sang post tiếp theo chưa xử lý.</li>
+        <li><strong>Tab GET API:</strong> Kiểm tra tab Facebook hiện tại đã sẵn sàng comment chưa.</li>
+        <li><strong>Tab BỎ QUA THÔNG MINH:</strong> Tự động né các post đã điền trước đó.</li>
+      </ul>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
