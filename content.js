@@ -38,12 +38,36 @@ function getPostContainer(box) {
   return box.closest('[role="article"], [data-pagelet]');
 }
 
+function getDomPathSignature(node, maxDepth = 6) {
+  if (!node) return '';
+
+  const parts = [];
+  let current = node;
+  let depth = 0;
+
+  while (current && current.parentElement && depth < maxDepth) {
+    const parent = current.parentElement;
+    const sameTagSiblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+    const siblingIndex = sameTagSiblings.indexOf(current);
+    parts.push(`${current.tagName}:${siblingIndex}`);
+    current = parent;
+    depth += 1;
+  }
+
+  return parts.join('>');
+}
+
 function getPostContainers() {
-  const rawPosts = Array.from(document.querySelectorAll('[role="article"], [data-pagelet]'));
+  const articlePosts = Array.from(document.querySelectorAll('[role="article"]'));
+  const fallbackPosts = articlePosts.length
+    ? []
+    : Array.from(document.querySelectorAll('[data-pagelet*="FeedUnit"], [data-pagelet*="Story"]'));
+  const rawPosts = articlePosts.length ? articlePosts : fallbackPosts;
   const unique = [];
   const seen = new Set();
 
   for (const post of rawPosts) {
+    if (!isVisible(post)) continue;
     if (seen.has(post)) continue;
     seen.add(post);
     unique.push(post);
@@ -58,8 +82,10 @@ function getPostFingerprint(post) {
   const pagelet = post.getAttribute('data-pagelet') || '';
   const dataFt = post.getAttribute('data-ft') || '';
   const firstLink = post.querySelector('a[href]')?.getAttribute('href') || '';
+  const permalink = post.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="fbid="]')?.getAttribute('href') || '';
+  const domSignature = getDomPathSignature(post);
   const textPreview = (post.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-  const rawFingerprint = [pagelet, dataFt, firstLink, textPreview].join('|');
+  const rawFingerprint = [pagelet, dataFt, permalink, firstLink, domSignature, textPreview].join('|');
 
   if (!rawFingerprint.replace(/\|/g, '').trim()) return null;
   return createSimpleHash(rawFingerprint);
@@ -270,9 +296,7 @@ async function getStatusSnapshot() {
   }
 
   const externalComposer = findAnyVisibleComposer(null, null);
-  if (externalComposer) {
-    availableCount = Math.max(availableCount, 1);
-  }
+  const externalComposerAvailable = Boolean(externalComposer);
 
   return {
     loadedPostCount: posts.length,
@@ -280,7 +304,8 @@ async function getStatusSnapshot() {
     totalCandidates,
     blockedByHistory,
     availableCount,
-    noComposerCount
+    noComposerCount,
+    externalComposerAvailable
   };
 }
 
@@ -429,9 +454,6 @@ async function findNextAvailableCommentBox(options = {}) {
 
       if (!ignoreHistory && fingerprint && processedSet.has(fingerprint)) {
         blockedByHistory += 1;
-        if (mutateHistoryMarks) {
-          post.setAttribute('data-processed', 'true');
-        }
         continue;
       }
 
@@ -511,6 +533,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         commentBoxCount: liveCommentBoxes,
         loadedPostCount: snapshot.loadedPostCount,
         availableCount: snapshot.availableCount,
+        externalComposerAvailable: snapshot.externalComposerAvailable,
         historyBlockedCount: snapshot.blockedByHistory,
         containerCount: snapshot.containerCount,
         noComposerCount: snapshot.noComposerCount

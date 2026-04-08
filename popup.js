@@ -1,6 +1,5 @@
 let comments = [];
 let currentIndex = 0;
-let hasRetriedIgnoreHistory = false;
 const UPLOAD_TIMEOUT_MS = 9000;
 const MAX_UPLOAD_DIMENSION = 1600;
 const JPEG_QUALITY = 0.82;
@@ -141,19 +140,21 @@ async function checkActivePageReady() {
       return;
     }
 
-    const readiness = response.availableCount > 0 ? 'Sẵn sàng comment' : 'Đã nhận diện trang, nhưng chưa thấy ô comment khả dụng';
+    const hasUsableComposer = (response.availableCount || 0) > 0 || Boolean(response.externalComposerAvailable);
+    const readiness = hasUsableComposer ? 'Sẵn sàng comment' : 'Đã nhận diện trang, nhưng chưa thấy ô comment khả dụng';
     const diagnostics = [
       `Trang: ${response.pageUrl || tabUrl}`,
       `Domain: ${domainLabel}`,
       `Content script: OK`,
       `Số post đã tải trong DOM: ${response.loadedPostCount || response.containerCount || 0}`,
-      `Số ô comment tìm thấy: ${response.commentBoxCount}`,
-      `Số ô có thể dùng ngay: ${response.availableCount || 0}`,
+      `Số ô comment tìm thấy trong post: ${response.commentBoxCount}`,
+      `Số ô có thể dùng ngay trong post: ${response.availableCount || 0}`,
+      `Có ô comment đang mở ngoài post: ${response.externalComposerAvailable ? 'Có' : 'Không'}`,
       `Số ô đang bị Bỏ qua thông minh chặn: ${response.historyBlockedCount || 0}`
     ];
 
     if ((response.noComposerCount || 0) > 0) {
-      diagnostics.push(`Số post tìm thấy nhưng không mở được hộp comment: ${response.noComposerCount}`);
+      diagnostics.push(`Số post không tìm/mở được hộp comment ngay trong post: ${response.noComposerCount}`);
     }
 
     diagnostics.push(`Số container bài viết: ${response.containerCount}`);
@@ -531,7 +532,7 @@ function initializeSmartSkipMenu() {
   });
 }
 
-function sendCurrentComment(ignoreHistory = false) {
+function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = false) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs[0]?.id) {
       document.getElementById('status').textContent = 'Không tìm thấy tab Facebook đang mở.';
@@ -555,9 +556,8 @@ function sendCurrentComment(ignoreHistory = false) {
 
         if (response.status === 'HistoryBlocked') {
           if (!hasRetriedIgnoreHistory) {
-            hasRetriedIgnoreHistory = true;
             document.getElementById('status').textContent = 'Bỏ qua thông minh đang chặn hết bài hiện tại, thử điền lại bỏ qua lịch sử...';
-            sendCurrentComment(true);
+            sendCurrentComment(true, true);
             return;
           }
 
@@ -629,7 +629,6 @@ document.getElementById('startBtn').addEventListener('click', () => {
   }
 
   currentIndex = 0;
-  hasRetriedIgnoreHistory = false;
   document.getElementById('nextBtn').disabled = false;
   sendCurrentComment();
 });
