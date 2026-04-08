@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'processedPostFingerprints';
+const sessionProcessedKeys = new Set();
 
 function getStorageValue(key) {
   return new Promise((resolve) => {
@@ -81,14 +82,75 @@ function getPostFingerprint(post) {
 
   const pagelet = post.getAttribute('data-pagelet') || '';
   const dataFt = post.getAttribute('data-ft') || '';
+  const postId = post.getAttribute('id') || '';
   const firstLink = post.querySelector('a[href]')?.getAttribute('href') || '';
   const permalink = post.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="fbid="]')?.getAttribute('href') || '';
   const domSignature = getDomPathSignature(post);
-  const textPreview = (post.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-  const rawFingerprint = [pagelet, dataFt, permalink, firstLink, domSignature, textPreview].join('|');
+
+  const normalizeUrl = (url) => {
+    if (!url) return '';
+    return url
+      .replace(/^https?:\/\/(www\.)?facebook\.com/i, '')
+      .replace(/[?#].*$/, '')
+      .trim();
+  };
+
+  const storyIdFromDataFt = (() => {
+    if (!dataFt) return '';
+    const match = dataFt.match(/(?:top_level_post_id|mf_story_key|content_owner_id_new)\\?"?\\s*[:=]\\s*"?(\d{6,})/i);
+    return match ? match[1] : '';
+  })();
+
+  const storyIdFromUrl = (() => {
+    const source = `${permalink} ${firstLink}`;
+    const match = source.match(/(?:story_fbid|fbid|posts\/)=(\d{6,})|\/posts\/(\d{6,})|\/permalink\/(\d{6,})/i);
+    if (!match) return '';
+    return match[1] || match[2] || match[3] || '';
+  })();
+
+  const stableTokens = [
+    storyIdFromDataFt,
+    storyIdFromUrl,
+    normalizeUrl(permalink),
+    normalizeUrl(firstLink),
+    pagelet,
+    dataFt,
+    postId
+  ].filter((token) => Boolean(token && token.trim()));
+
+  // Important: avoid post.innerText so fingerprint does not change after posting a comment.
+  const rawFingerprint = stableTokens.length
+    ? stableTokens.join('|')
+    : [domSignature, normalizeUrl(firstLink), pagelet].join('|');
 
   if (!rawFingerprint.replace(/\|/g, '').trim()) return null;
   return createSimpleHash(rawFingerprint);
+}
+
+function getSessionPostKey(post) {
+  if (!post) return null;
+
+  const pagelet = post.getAttribute('data-pagelet') || '';
+  const postId = post.getAttribute('id') || '';
+  const permalink = post.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="fbid="]')?.getAttribute('href') || '';
+  const firstLink = post.querySelector('a[href]')?.getAttribute('href') || '';
+  const domSignature = getDomPathSignature(post, 8);
+
+  const normalizeUrl = (url) => (url || '')
+    .replace(/^https?:\/\/(www\.)?facebook\.com/i, '')
+    .replace(/[?#].*$/, '')
+    .trim();
+
+  const token = [
+    normalizeUrl(permalink),
+    normalizeUrl(firstLink),
+    pagelet,
+    postId,
+    domSignature
+  ].filter((part) => Boolean(part && part.trim())).join('|');
+
+  if (!token) return null;
+  return createSimpleHash(`session:${token}`);
 }
 
 function findComposerInPost(post) {
@@ -108,7 +170,48 @@ function getVisibleComposers() {
     if (rect.width <= 0 || rect.height <= 0) continue;
 
     const style = window.getComputedStyle(node);
-    if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') continue;
+    if (style.display === 'none' || style.visibility === 'hidden') continue;
+
+    unique.push(node);
+  }
+
+  return unique;
+}
+
+function getVisibleCommentSurfaces() {
+  const selector = [
+    'div[contenteditable="true"]',
+    'div[role="textbox"]',
+    'div[data-lexical-editor="true"]',
+    'span[role="textbox"]',
+    'span[data-lexical-editor="true"]',
+    '[placeholder*="bình luận" i]',
+    '[placeholder*="binh luan" i]',
+    '[placeholder*="comment" i]',
+    'div[role="button"][aria-label*="bình luận dưới tên" i]',
+    'div[role="button"][aria-label*="binh luan duoi ten" i]',
+    'div[role="button"][aria-label*="comment as" i]',
+    'div[aria-label*="bình luận dưới tên" i]',
+    'div[aria-label*="binh luan duoi ten" i]',
+    'div[aria-label*="comment as" i]',
+    '[aria-label*="bình luận dưới tên" i]',
+    '[aria-label*="binh luan duoi ten" i]',
+    '[aria-label*="comment as" i]'
+  ].join(', ');
+
+  const nodes = Array.from(document.querySelectorAll(selector));
+  const unique = [];
+  const seen = new Set();
+
+  for (const node of nodes) {
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden') continue;
 
     unique.push(node);
   }
@@ -118,12 +221,67 @@ function getVisibleComposers() {
 
 function getComposerHintText(composer) {
   if (!composer) return '';
-  return `${composer.getAttribute('aria-label') || ''} ${composer.getAttribute('aria-placeholder') || ''} ${composer.getAttribute('data-placeholder') || ''}`.toLowerCase().trim();
+  const text = (composer.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 160);
+  return `${composer.getAttribute('aria-label') || ''} ${composer.getAttribute('aria-placeholder') || ''} ${composer.getAttribute('data-placeholder') || ''} ${composer.getAttribute('placeholder') || ''} ${text}`.toLowerCase().trim();
+}
+
+function hasCommentPromptHint(text) {
+  if (!text) return false;
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  return normalized.includes('bình luận dưới tên')
+    || normalized.includes('binh luan duoi ten')
+    || normalized.includes('comment as');
 }
 
 function hasUnderNameHint(composer) {
   const hint = getComposerHintText(composer);
-  return hint.includes('bình luận dưới tên') || hint.includes('binh luan duoi ten') || hint.includes('comment as');
+  return hasCommentPromptHint(hint);
+}
+
+function isLikelyCommentSurface(node) {
+  if (!node) return false;
+
+  if (isLikelyCommentComposer(node)) {
+    return true;
+  }
+
+  const hint = getComposerHintText(node);
+  if (hasCommentPromptHint(hint)) {
+    return true;
+  }
+
+  const role = (node.getAttribute('role') || '').toLowerCase();
+  return role === 'textbox' || role === 'combobox';
+}
+
+function findInlinePromptSurfaceInPost(post) {
+  if (!post) return null;
+
+  const candidates = Array.from(post.querySelectorAll('div, span'));
+  let best = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  const postRect = post.getBoundingClientRect();
+
+  for (const node of candidates) {
+    const rawText = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!rawText || rawText.length > 120) continue;
+    if (!hasCommentPromptHint(rawText)) continue;
+    if (!isVisible(node)) continue;
+
+    const rect = node.getBoundingClientRect();
+    const inBottomZone = rect.top >= (postRect.top - 80) && rect.top <= (postRect.bottom + 220);
+    const sizeScore = Math.min(rect.width / 20, 18) + Math.min(rect.height * 2, 12);
+    let score = sizeScore;
+    if (inBottomZone) score += 28;
+    if (node.getAttribute('role') === 'textbox') score += 12;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  }
+
+  return best;
 }
 
 function isLikelyCommentComposer(composer) {
@@ -197,6 +355,179 @@ function pickClosestComposer(composers, anchorElement) {
   }
 
   return best;
+}
+
+function isComposerAssociatedWithAnchor(composer, anchorElement) {
+  if (!composer || !anchorElement) return false;
+
+  const composerRect = composer.getBoundingClientRect();
+  const anchorRect = anchorElement.getBoundingClientRect();
+
+  const cx = composerRect.left + (composerRect.width / 2);
+  const cy = composerRect.top + (composerRect.height / 2);
+  const ax = anchorRect.left + (anchorRect.width / 2);
+  const ay = anchorRect.top + (anchorRect.height / 2);
+
+  const dist = Math.hypot(cx - ax, cy - ay);
+  const horizontalOffset = Math.abs(cx - ax);
+  const verticalInRange = cy >= (anchorRect.top - 140) && cy <= (anchorRect.bottom + 500);
+
+  // Facebook can render composer outside post DOM. Keep a permissive but bounded proximity check.
+  return dist <= 420 || (horizontalOffset <= Math.max(anchorRect.width, 280) && verticalInRange);
+}
+
+function getPostMatchScore(node, post) {
+  if (!node || !post) return Number.NEGATIVE_INFINITY;
+
+  const nodeRect = node.getBoundingClientRect();
+  const postRect = post.getBoundingClientRect();
+
+  const nx = nodeRect.left + (nodeRect.width / 2);
+  const ny = nodeRect.top + (nodeRect.height / 2);
+  const px = postRect.left + (postRect.width / 2);
+  const py = postRect.bottom - Math.min(postRect.height * 0.2, 160);
+
+  const overlapX = Math.max(0, Math.min(nodeRect.right, postRect.right) - Math.max(nodeRect.left, postRect.left));
+  const overlapRatio = overlapX / Math.max(1, Math.min(nodeRect.width, postRect.width));
+  const dyToBottom = Math.abs(ny - postRect.bottom);
+  const dist = Math.hypot(nx - px, ny - py);
+
+  let score = 0;
+  if (post.contains(node)) score += 80;
+  score += overlapRatio * 60;
+  if (ny >= (postRect.top - 120) && ny <= (postRect.bottom + 280)) score += 22;
+  score -= Math.min(dyToBottom / 14, 35);
+  score -= Math.min(dist / 28, 42);
+
+  return score;
+}
+
+function isNodeBestMatchedToPost(node, post, allPosts) {
+  if (!node || !post) return false;
+
+  const posts = Array.isArray(allPosts) && allPosts.length ? allPosts : getPostContainers();
+  let bestPost = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const candidate of posts) {
+    const score = getPostMatchScore(node, candidate);
+    if (score > bestScore) {
+      bestScore = score;
+      bestPost = candidate;
+    }
+  }
+
+  return bestPost === post && bestScore > -25;
+}
+
+function findBestMatchedPostForNode(node, posts) {
+  if (!node || !Array.isArray(posts) || !posts.length) {
+    return null;
+  }
+
+  let bestPost = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const candidate of posts) {
+    const score = getPostMatchScore(node, candidate);
+    if (score > bestScore) {
+      bestScore = score;
+      bestPost = candidate;
+    }
+  }
+
+  return bestScore > -25 ? bestPost : null;
+}
+
+function findComposerForPost(post) {
+  if (!post) return null;
+
+  const inlineComposer = findComposerInPost(post);
+  if (inlineComposer && isVisible(inlineComposer)) {
+    return inlineComposer;
+  }
+
+  const trigger = findCommentTriggerInPost(post);
+  const visibleComposers = getVisibleComposers().filter(isLikelyCommentComposer);
+  if (!visibleComposers.length) {
+    return null;
+  }
+
+  const anchor = trigger || post;
+  const picked = pickBestCommentComposer(visibleComposers, anchor, post) || pickClosestComposer(visibleComposers, anchor);
+
+  if (!picked) {
+    return null;
+  }
+
+  if (post.contains(picked)) {
+    return picked;
+  }
+
+  // Avoid mapping one open composer to many posts; only accept if this post is best match.
+  if (!isNodeBestMatchedToPost(picked, post, getPostContainers())) {
+    return null;
+  }
+
+  return isComposerAssociatedWithAnchor(picked, anchor) ? picked : null;
+}
+
+function findCommentSurfaceForPost(post, allPosts) {
+  if (!post) return null;
+
+  const inlinePromptSurface = findInlinePromptSurfaceInPost(post);
+  if (inlinePromptSurface) {
+    return inlinePromptSurface;
+  }
+
+  const composer = findComposerForPost(post);
+  if (composer) {
+    return composer;
+  }
+
+  const trigger = findCommentTriggerInPost(post);
+  const anchor = trigger || post;
+  const surfaces = getVisibleCommentSurfaces().filter(isLikelyCommentSurface);
+  if (!surfaces.length) {
+    return null;
+  }
+
+  const picked = pickBestCommentComposer(surfaces, anchor, post) || pickClosestComposer(surfaces, anchor);
+  if (!picked) {
+    return null;
+  }
+
+  if (post.contains(picked)) {
+    return picked;
+  }
+
+  if (isNodeBestMatchedToPost(picked, post, allPosts)) {
+    return picked;
+  }
+
+  return isComposerAssociatedWithAnchor(picked, anchor) ? picked : null;
+}
+
+async function openComposerFromVisibleSurface(post) {
+  const surface = findCommentSurfaceForPost(post, getPostContainers());
+  if (!surface) return null;
+
+  if (surface.isContentEditable && isVisible(surface)) {
+    return surface;
+  }
+
+  surface.scrollIntoView({ behavior: 'auto', block: 'center' });
+  surface.click();
+
+  for (const waitMs of [180, 280, 420, 620]) {
+    await sleep(waitMs);
+    const composer = findComposerForPost(post);
+    if (composer) {
+      return composer;
+    }
+  }
+
+  return null;
 }
 
 function findSubmitButtonNearComposer(composer) {
@@ -273,6 +604,7 @@ async function getStatusSnapshot() {
   let blockedByHistory = 0;
   let availableCount = 0;
   let noComposerCount = 0;
+  let commentBoxCount = 0;
 
   for (const post of posts) {
     const fingerprint = getPostFingerprint(post);
@@ -284,16 +616,21 @@ async function getStatusSnapshot() {
 
     totalCandidates += 1;
 
-    const inlineComposer = findComposerInPost(post);
-    const hasInlineComposer = Boolean(inlineComposer && isVisible(inlineComposer));
+    const commentSurfaceForPost = findCommentSurfaceForPost(post, posts);
+    const hasComposer = Boolean(commentSurfaceForPost);
     const hasTrigger = Boolean(findCommentTriggerInPost(post));
 
-    if (hasInlineComposer || hasTrigger) {
+    if (hasComposer) {
+      commentBoxCount += 1;
+    }
+
+    if (hasComposer || hasTrigger) {
       availableCount += 1;
-    } else {
-      noComposerCount += 1;
     }
   }
+
+  // Keep counters consistent even when Facebook mutates DOM during traversal.
+  noComposerCount = Math.max(totalCandidates - availableCount, 0);
 
   const externalComposer = findAnyVisibleComposer(null, null);
   const externalComposerAvailable = Boolean(externalComposer);
@@ -304,6 +641,7 @@ async function getStatusSnapshot() {
     totalCandidates,
     blockedByHistory,
     availableCount,
+    commentBoxCount,
     noComposerCount,
     externalComposerAvailable
   };
@@ -362,19 +700,25 @@ function findAnyVisibleComposer(anchorElement, post) {
 }
 
 async function ensureComposerReady(post, autoOpenComposer) {
-  let composer = findComposerInPost(post);
-  if (composer && isVisible(composer)) {
+  let composer = findComposerForPost(post);
+  if (composer) {
+    return composer;
+  }
+
+  // If Facebook shows "Binh luan duoi ten ..." surface, click it to open real composer.
+  composer = await openComposerFromVisibleSurface(post);
+  if (composer) {
     return composer;
   }
 
   // Handle case where comment box is already opened outside the post container.
-  composer = findAnyVisibleComposer(post, post);
+  composer = findComposerForPost(post);
   if (composer) {
     return composer;
   }
 
   if (!autoOpenComposer) {
-    return findAnyVisibleComposer(post, post);
+    return findComposerForPost(post);
   }
 
   const trigger = findCommentTriggerInPost(post);
@@ -389,8 +733,8 @@ async function ensureComposerReady(post, autoOpenComposer) {
   for (const waitMs of [250, 450, 700, 950]) {
     await sleep(waitMs);
 
-    composer = findComposerInPost(post);
-    if (composer && isVisible(composer)) {
+    composer = findComposerForPost(post);
+    if (composer) {
       return composer;
     }
 
@@ -420,6 +764,30 @@ async function saveProcessedSet(processedSet) {
   await setStorageValue(STORAGE_KEY, recent);
 }
 
+async function markPostAsProcessed(target) {
+  if (!target) return;
+
+  target.post?.setAttribute('data-processed', 'true');
+  if (target.scannedPost && target.scannedPost !== target.post) {
+    target.scannedPost.setAttribute('data-processed', 'true');
+  }
+
+  if (target.ownerSessionKey) {
+    sessionProcessedKeys.add(target.ownerSessionKey);
+  }
+  if (target.scannedSessionKey) {
+    sessionProcessedKeys.add(target.scannedSessionKey);
+  }
+
+  if (target.fingerprint) {
+    target.processedSet.add(target.fingerprint);
+    if (target.scannedFingerprint) {
+      target.processedSet.add(target.scannedFingerprint);
+    }
+    await saveProcessedSet(target.processedSet);
+  }
+}
+
 function scrollFeedForNextBatch() {
   const amount = Math.max(Math.floor(window.innerHeight * 0.92), 680);
   window.scrollBy({ top: amount, left: 0, behavior: 'auto' });
@@ -446,6 +814,11 @@ async function findNextAvailableCommentBox(options = {}) {
     const startNoComposer = noComposerCount;
 
     for (const post of posts) {
+      const postSessionKey = getSessionPostKey(post);
+      if (postSessionKey && sessionProcessedKeys.has(postSessionKey)) {
+        continue;
+      }
+
       if (post.hasAttribute('data-processed')) {
         continue;
       }
@@ -460,30 +833,38 @@ async function findNextAvailableCommentBox(options = {}) {
       // Only increment totalCandidates after passing history check
       totalCandidates += 1;
 
-      // If a valid external composer is already open, use it immediately.
-      const externalComposer = findAnyVisibleComposer(post, post);
-      if (externalComposer) {
-        return {
-          box: externalComposer,
-          post,
-          fingerprint,
-          processedSet,
-          totalCandidates,
-          blockedByHistory,
-          scrollRounds: round
-        };
-      }
-
       const box = await ensureComposerReady(post, autoOpenComposer);
       if (!box) {
         noComposerCount += 1;
         continue;
       }
 
+      // Re-bind selected composer to the most likely owner post to avoid marking wrong post as processed.
+      const ownerPost = findBestMatchedPostForNode(box, posts) || post;
+      const ownerFingerprint = getPostFingerprint(ownerPost);
+      const ownerSessionKey = getSessionPostKey(ownerPost);
+
+      if (ownerSessionKey && sessionProcessedKeys.has(ownerSessionKey)) {
+        continue;
+      }
+
+      if (!ignoreHistory && ownerFingerprint && processedSet.has(ownerFingerprint)) {
+        blockedByHistory += 1;
+        continue;
+      }
+
+      if (ownerPost.hasAttribute('data-processed')) {
+        continue;
+      }
+
       return {
         box,
-        post,
-        fingerprint,
+        scannedPost: post,
+        post: ownerPost,
+        fingerprint: ownerFingerprint || fingerprint,
+        scannedFingerprint: fingerprint,
+        ownerSessionKey,
+        scannedSessionKey: postSessionKey,
         processedSet,
         totalCandidates,
         blockedByHistory,
@@ -522,15 +903,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'pingStatus') {
     (async () => {
       const snapshot = await getStatusSnapshot();
-      const liveCommentBoxes = Array.from(document.querySelectorAll('div[contenteditable="true"]')).filter((box) => {
-        const post = getPostContainer(box);
-        return Boolean(post) && isVisible(box);
-      }).length;
 
       sendResponse({
         status: 'ready',
         pageUrl: window.location.href,
-        commentBoxCount: liveCommentBoxes,
+        commentBoxCount: snapshot.commentBoxCount,
         loadedPostCount: snapshot.loadedPostCount,
         availableCount: snapshot.availableCount,
         externalComposerAvailable: snapshot.externalComposerAvailable,
@@ -545,6 +922,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'resetProcessedHistory') {
     (async () => {
       await setStorageValue(STORAGE_KEY, []);
+      sessionProcessedKeys.clear();
       document.querySelectorAll('[data-processed="true"]').forEach((node) => {
         node.removeAttribute('data-processed');
       });
@@ -607,11 +985,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       data: request.comment
     }));
 
+    // Mark immediately so the next request skips this post even if the DOM updates slowly.
+    await markPostAsProcessed(target);
+
     // Wait a bit for button to enable/appear
     await sleep(300);
 
     // Find and click submit button
-    let submitSucceeded = false;
     const submitBtn = findSubmitButtonNearComposer(target.box);
     if (submitBtn) {
       submitBtn.click();
@@ -622,25 +1002,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       target.box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
       target.box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
       await sleep(900);
-    }
-
-    // Treat as success only when composer content changes from original full text.
-    const currentText = (target.box.textContent || '').replace(/\u200b/g, '').trim();
-    const expectedText = (request.comment || '').trim();
-    if (currentText !== expectedText) {
-      submitSucceeded = true;
-    }
-
-    if (!submitSucceeded) {
-      sendResponse({ status: 'SubmitFailed', scrollRounds: target.scrollRounds });
-      return;
-    }
-
-    target.post.setAttribute('data-processed', 'true');
-
-    if (target.fingerprint) {
-      target.processedSet.add(target.fingerprint);
-      await saveProcessedSet(target.processedSet);
     }
 
     target.post.scrollIntoView({ behavior: 'smooth', block: 'center' });

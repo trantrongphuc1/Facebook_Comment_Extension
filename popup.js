@@ -1,5 +1,6 @@
 let comments = [];
 let currentIndex = 0;
+let isSendingComment = false;
 const UPLOAD_TIMEOUT_MS = 9000;
 const MAX_UPLOAD_DIMENSION = 1600;
 const JPEG_QUALITY = 0.82;
@@ -533,9 +534,22 @@ function initializeSmartSkipMenu() {
 }
 
 function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = false) {
+  if (isSendingComment) {
+    return;
+  }
+
+  isSendingComment = true;
+  const startBtn = document.getElementById('startBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  if (startBtn) startBtn.disabled = true;
+  if (nextBtn) nextBtn.disabled = true;
+
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs[0]?.id) {
       document.getElementById('status').textContent = 'Không tìm thấy tab Facebook đang mở.';
+      isSendingComment = false;
+      if (startBtn) startBtn.disabled = false;
+      if (nextBtn && comments.length > 0) nextBtn.disabled = false;
       return;
     }
 
@@ -543,14 +557,18 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
       tabs[0].id,
       { action: 'fillNext', comment: comments[currentIndex], ignoreHistory },
       (response) => {
+        isSendingComment = false;
+        if (startBtn) startBtn.disabled = false;
+
         if (chrome.runtime.lastError) {
           document.getElementById('status').textContent = 'Không thể kết nối với trang Facebook. Hãy reload trang và thử lại.';
+          if (nextBtn) nextBtn.disabled = comments.length <= 1;
           return;
         }
 
         if (!response) {
           document.getElementById('status').textContent = 'Không nhận được phản hồi từ tab Facebook.';
-          document.getElementById('nextBtn').disabled = true;
+          if (nextBtn) nextBtn.disabled = true;
           return;
         }
 
@@ -562,7 +580,7 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
           }
 
           document.getElementById('status').textContent = 'Các bài hiện tại đã nằm trong lịch sử bỏ qua. Hãy vào tab BỎ QUA THÔNG MINH để đặt lại.';
-          document.getElementById('nextBtn').disabled = true;
+          if (nextBtn) nextBtn.disabled = true;
           return;
         }
 
@@ -576,23 +594,26 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
           } else {
             document.getElementById('status').textContent = 'Không còn post phù hợp để điền comment.';
           }
-          document.getElementById('nextBtn').disabled = true;
+          if (nextBtn) nextBtn.disabled = true;
           return;
         }
 
         if (response.status === 'SubmitFailed') {
           document.getElementById('status').textContent = 'Đã điền vào ô comment nhưng chưa bấm gửi thành công. Không bỏ qua post này, bạn bấm lại để thử tiếp.';
-          document.getElementById('nextBtn').disabled = false;
+          if (nextBtn) nextBtn.disabled = false;
           return;
         }
 
         if (response.status !== 'Filled') {
           document.getElementById('status').textContent = 'Không thể điền comment ở lần này.';
-          document.getElementById('nextBtn').disabled = true;
+          if (nextBtn) nextBtn.disabled = true;
           return;
         }
 
         document.getElementById('status').textContent = `Điền comment ${currentIndex + 1}/${comments.length}`;
+        if (nextBtn) {
+          nextBtn.disabled = currentIndex >= comments.length - 1;
+        }
       }
     );
   });
