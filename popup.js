@@ -141,8 +141,14 @@ async function checkActivePageReady() {
       return;
     }
 
-    const hasUsableComposer = (response.availableCount || 0) > 0 || Boolean(response.externalComposerAvailable);
-    const readiness = hasUsableComposer ? 'Sẵn sàng comment' : 'Đã nhận diện trang, nhưng chưa thấy ô comment khả dụng';
+    const hasDetectedPosts = (response.loadedPostCount || response.containerCount || 0) > 0;
+    const hasUsableComposer = (response.availableCount || 0) > 0;
+    const hasOnlyExternalComposer = !hasDetectedPosts && Boolean(response.externalComposerAvailable);
+    const readiness = hasOnlyExternalComposer
+      ? 'Có ô comment nhưng chưa ghép được vào post. Hãy cuộn thêm để tải bài hoặc mở post dạng feed.'
+      : (hasUsableComposer || Boolean(response.externalComposerAvailable)
+        ? 'Sẵn sàng comment'
+        : 'Đã nhận diện trang, nhưng chưa thấy ô comment khả dụng');
     const diagnostics = [
       `Trang: ${response.pageUrl || tabUrl}`,
       `Domain: ${domainLabel}`,

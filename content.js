@@ -35,6 +35,67 @@ function isVisible(element) {
   return rect.width > 24 && rect.height > 8;
 }
 
+function isLikelyPostFrame(node) {
+  if (!node || !isVisible(node)) return false;
+
+  const rect = node.getBoundingClientRect();
+  if (rect.width < 260 || rect.height < 140) return false;
+
+  const hintText = (node.textContent || '').toLowerCase();
+  if (hintText.includes('bình luận') || hintText.includes('binh luan') || hintText.includes('comment')) {
+    return true;
+  }
+
+  const hasInteractiveCommentNode = Boolean(node.querySelector('[role="button"][aria-label*="bình luận" i], [role="button"][aria-label*="comment" i], [placeholder*="bình luận" i], [placeholder*="comment" i], div[contenteditable="true"]'));
+  return hasInteractiveCommentNode;
+}
+
+function getPostCandidateFromNode(node) {
+  if (!node) return null;
+
+  const candidate = node.closest('[role="article"], [data-pagelet*="FeedUnit"], [data-pagelet*="Story"], [data-pagelet*="ProfileTimeline"], [data-pagelet*="Timeline"], [aria-posinset]');
+  if (candidate && isLikelyPostFrame(candidate)) {
+    return candidate;
+  }
+
+  let current = node.parentElement;
+  while (current && current !== document.body) {
+    if (isLikelyPostFrame(current)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function collectPostCandidatesFromCommentUI() {
+  const nodes = Array.from(document.querySelectorAll([
+    'div[contenteditable="true"]',
+    'span[role="textbox"]',
+    '[placeholder*="bình luận" i]',
+    '[placeholder*="binh luan" i]',
+    '[placeholder*="comment" i]',
+    '[aria-label*="bình luận dưới tên" i]',
+    '[aria-label*="binh luan duoi ten" i]',
+    '[aria-label*="comment as" i]',
+    '[role="button"][aria-label*="bình luận" i]',
+    '[role="button"][aria-label*="comment" i]'
+  ].join(', ')));
+
+  const found = [];
+  const seen = new Set();
+
+  for (const node of nodes) {
+    const candidate = getPostCandidateFromNode(node);
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    found.push(candidate);
+  }
+
+  return found;
+}
+
 function getPostContainer(box) {
   return box.closest('[role="article"], [data-pagelet]');
 }
@@ -59,22 +120,71 @@ function getDomPathSignature(node, maxDepth = 6) {
 }
 
 function getPostContainers() {
-  const articlePosts = Array.from(document.querySelectorAll('[role="article"]'));
-  const fallbackPosts = articlePosts.length
-    ? []
-    : Array.from(document.querySelectorAll('[data-pagelet*="FeedUnit"], [data-pagelet*="Story"]'));
-  const rawPosts = articlePosts.length ? articlePosts : fallbackPosts;
-  const unique = [];
-  const seen = new Set();
+  const articlePosts = Array.from(document.querySelectorAll('[role="article"]')).filter(isLikelyPostFrame);
+  const pageletPosts = Array.from(document.querySelectorAll('[data-pagelet*="FeedUnit"], [data-pagelet*="Story"], [data-pagelet*="ProfileTimeline"], [data-pagelet*="Timeline"]')).filter(isLikelyPostFrame);
+  const interactionDerivedPosts = collectPostCandidatesFromCommentUI();
+
+  const rawPosts = [];
+  if (articlePosts.length) {
+    rawPosts.push(...articlePosts);
+  }
+  if (pageletPosts.length) {
+    rawPosts.push(...pageletPosts);
+  }
+  if (!rawPosts.length && interactionDerivedPosts.length) {
+    rawPosts.push(...interactionDerivedPosts);
+  }
+
+  const uniqueByKey = new Map();
 
   for (const post of rawPosts) {
     if (!isVisible(post)) continue;
-    if (seen.has(post)) continue;
-    seen.add(post);
-    unique.push(post);
+
+    const key = getPostFingerprint(post) || getSessionPostKey(post) || getDomPathSignature(post, 8);
+    if (!key) continue;
+
+    const rect = post.getBoundingClientRect();
+    const area = rect.width * rect.height;
+    const existing = uniqueByKey.get(key);
+
+    if (!existing || area > existing.area) {
+      uniqueByKey.set(key, { post, area });
+    }
   }
 
-  return unique;
+  return Array.from(uniqueByKey.values()).map((entry) => entry.post);
+}
+
+function findNextPostInFeed(currentPost, posts = getPostContainers()) {
+  if (!currentPost || !Array.isArray(posts) || !posts.length) {
+    return null;
+  }
+
+  const currentIndex = posts.indexOf(currentPost);
+  if (currentIndex >= 0) {
+    return posts[currentIndex + 1] || null;
+  }
+
+  const currentRect = currentPost.getBoundingClientRect();
+  let nextPost = null;
+  let bestTop = Number.POSITIVE_INFINITY;
+
+  for (const post of posts) {
+    if (post === currentPost) continue;
+
+    const rect = post.getBoundingClientRect();
+    if (rect.top >= (currentRect.bottom - 16) && rect.top < bestTop) {
+      bestTop = rect.top;
+      nextPost = post;
+    }
+  }
+
+  return nextPost || null;
+}
+
+function scrollPostIntoView(post) {
+  if (!post) return;
+  post.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function getPostFingerprint(post) {
@@ -857,6 +967,13 @@ async function findNextAvailableCommentBox(options = {}) {
         continue;
       }
 
+      if (ownerSessionKey) {
+        sessionProcessedKeys.add(ownerSessionKey);
+      }
+      if (scannedSessionKey && scannedSessionKey !== ownerSessionKey) {
+        sessionProcessedKeys.add(scannedSessionKey);
+      }
+
       return {
         box,
         scannedPost: post,
@@ -985,9 +1102,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       data: request.comment
     }));
 
-    // Mark immediately so the next request skips this post even if the DOM updates slowly.
-    await markPostAsProcessed(target);
-
     // Wait a bit for button to enable/appear
     await sleep(300);
 
@@ -1004,7 +1118,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       await sleep(900);
     }
 
-    target.post.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Mark only after submit so the next run skips posts that were actually handled.
+    await markPostAsProcessed(target);
+
+    const nextPost = findNextPostInFeed(target.post, getPostContainers());
+    if (nextPost) {
+      scrollPostIntoView(nextPost);
+    } else {
+      scrollFeedForNextBatch();
+    }
     sendResponse({ status: 'Filled', scrollRounds: target.scrollRounds });
   })();
 
