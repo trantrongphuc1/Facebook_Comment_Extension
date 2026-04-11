@@ -5,6 +5,7 @@
   "description": "Tiện ích điền bình luận bán tự động cho bài viết Facebook",
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
     "scripting"
   ],

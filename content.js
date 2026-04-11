@@ -1,4 +1,6 @@
+// #region Core State & Utilities
 const STORAGE_KEY = 'processedPostFingerprints';
+const CONTENT_SCRIPT_VERSION = '2026-04-11-submit-verify-v2';
 const sessionProcessedKeys = new Set();
 
 function getStorageValue(key) {
@@ -34,6 +36,10 @@ function isVisible(element) {
   const rect = element.getBoundingClientRect();
   return rect.width > 24 && rect.height > 8;
 }
+
+// #endregion
+
+// #region Post Discovery & Identity
 
 function isLikelyPostFrame(node) {
   if (!node || !isVisible(node)) return false;
@@ -262,6 +268,49 @@ function getSessionPostKey(post) {
   if (!token) return null;
   return createSimpleHash(`session:${token}`);
 }
+
+function normalizeFacebookUrlToken(url) {
+  return (url || '')
+    .replace(/^https?:\/\/(www\.)?facebook\.com/i, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/$/, '')
+    .trim();
+}
+
+function extractFacebookPostKey(url) {
+  const normalized = normalizeFacebookUrlToken(url);
+  if (!normalized) return '';
+
+  const match = normalized.match(/(?:story_fbid|fbid|posts)\/(\d{5,})|(?:story_fbid|fbid)=(\d{5,})|\/posts\/(\d{5,})|\/permalink\/(\d{5,})/i);
+  if (!match) return normalized;
+
+  return match[1] || match[2] || match[3] || match[4] || normalized;
+}
+
+function matchesTargetPostUrl(post, targetPostUrl) {
+  if (!post || !targetPostUrl) return false;
+
+  const targetKey = extractFacebookPostKey(targetPostUrl);
+  if (!targetKey) return false;
+
+  const pageUrl = normalizeFacebookUrlToken(window.location.href);
+  const permalink = normalizeFacebookUrlToken(post.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="fbid="]')?.getAttribute('href') || '');
+  const firstLink = normalizeFacebookUrlToken(post.querySelector('a[href]')?.getAttribute('href') || '');
+  const pagelet = normalizeFacebookUrlToken(post.getAttribute('data-pagelet') || '');
+  const postId = normalizeFacebookUrlToken(post.getAttribute('id') || '');
+  const candidates = [extractFacebookPostKey(permalink), extractFacebookPostKey(firstLink), extractFacebookPostKey(pageUrl), extractFacebookPostKey(pagelet), extractFacebookPostKey(postId)].filter(Boolean);
+
+  if (candidates.includes(targetKey)) {
+    return true;
+  }
+
+  const normalizedTarget = normalizeFacebookUrlToken(targetPostUrl);
+  return [permalink, firstLink, pageUrl].some((candidate) => candidate && (candidate === normalizedTarget || normalizedTarget.includes(candidate) || candidate.includes(normalizedTarget)));
+}
+
+// #endregion
+
+// #region Composer Detection & Mapping
 
 function findComposerInPost(post) {
   return post.querySelector('div[contenteditable="true"]');
@@ -640,6 +689,10 @@ async function openComposerFromVisibleSurface(post) {
   return null;
 }
 
+// #endregion
+
+// #region Submit Action Detection
+
 function findSubmitButtonNearComposer(composer) {
   if (!composer) return null;
 
@@ -662,6 +715,15 @@ function findSubmitButtonNearComposer(composer) {
   let best = null;
   let bestScore = Number.NEGATIVE_INFINITY;
 
+  // Prefer explicit submit buttons first.
+  for (const container of searchContainers) {
+    if (!container) continue;
+    const directSubmit = container.querySelector('button[type="submit"], input[type="submit"]');
+    if (directSubmit && isVisible(directSubmit)) {
+      return directSubmit;
+    }
+  }
+
   // Search in each container
   for (const container of searchContainers) {
     if (!container) continue;
@@ -679,9 +741,10 @@ function findSubmitButtonNearComposer(composer) {
       const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
       const title = (btn.title || '').toLowerCase().trim();
       const text = `${textContent} ${ariaLabel} ${title}`.trim();
-      if (!text) continue;
 
-      if (bannedTokens.some((token) => text.includes(token))) continue;
+      // Keep icon-only candidates as a last resort near the composer right edge.
+      const iconOnlyCandidate = !text;
+      if (!iconOnlyCandidate && bannedTokens.some((token) => text.includes(token))) continue;
 
       let score = 0;
       if (strongTokens.some((token) => text.includes(token))) score += 6;
@@ -696,7 +759,17 @@ function findSubmitButtonNearComposer(composer) {
       const dist = Math.hypot(bcx - cx, bcy - cy);
       score -= Math.min(dist / 50, 10);
 
-      if (score > bestScore && score > 1) {
+      if (iconOnlyCandidate) {
+        // Facebook send icon often has no text/aria; keep only candidates tightly aligned with composer row.
+        const nearComposerRow = bcy >= (composerRect.top - 36) && bcy <= (composerRect.bottom + 36);
+        const onRightSide = bcx >= (composerRect.right - 120);
+        if (!(nearComposerRow && onRightSide)) {
+          continue;
+        }
+        score += 1;
+      }
+
+      if (score > bestScore && score >= 0.5) {
         bestScore = score;
         best = btn;
       }
@@ -705,6 +778,315 @@ function findSubmitButtonNearComposer(composer) {
 
   return best;
 }
+
+function normalizeDraftText(text) {
+  return (text || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function countTextOccurrences(root, needle) {
+  if (!root || !needle || needle.length < 12) return 0;
+
+  let count = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+
+  while (node) {
+    const normalizedNode = normalizeDraftText(node.textContent || '');
+    if (normalizedNode.includes(needle)) {
+      count += 1;
+    }
+    node = walker.nextNode();
+  }
+
+  return count;
+}
+
+function isButtonDisabled(button) {
+  if (!button) return false;
+  if (button.disabled) return true;
+  const aria = (button.getAttribute('aria-disabled') || '').toLowerCase();
+  return aria === 'true';
+}
+
+async function didDraftLikelySubmit(composer, expectedText, context = {}) {
+  const normalizedExpected = normalizeDraftText(expectedText || '');
+  if (!normalizedExpected) return true;
+
+  const { post = null, beforeOccurrenceCount = 0 } = context;
+
+  for (const waitMs of [240, 380, 560, 760, 980]) {
+    await sleep(waitMs);
+    const current = normalizeDraftText(composer?.textContent || '');
+    if (!current) return true;
+
+    if (post && normalizedExpected.length >= 12) {
+      const currentCount = countTextOccurrences(post, normalizedExpected);
+      if (currentCount > beforeOccurrenceCount) {
+        return true;
+      }
+    }
+
+    if (current !== normalizedExpected) {
+      const stillSameDraft = current.includes(normalizedExpected) || normalizedExpected.includes(current);
+      if (!stillSameDraft) {
+        const submitBtn = findSubmitButtonNearComposer(composer);
+        if (!submitBtn || isButtonDisabled(submitBtn)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+async function submitCommentFromComposer(composer, expectedText = '', post = null) {
+  if (!composer) return false;
+
+  const normalizedExpected = normalizeDraftText(expectedText || '');
+  const beforeOccurrenceCount = post ? countTextOccurrences(post, normalizedExpected) : 0;
+  const submitContext = { post, beforeOccurrenceCount };
+
+  const submitBtn = findSubmitButtonNearComposer(composer);
+  if (submitBtn) {
+    submitBtn.click();
+    const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
+    if (ok) return true;
+  }
+
+  const form = composer.closest('form');
+  if (form) {
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+    } else {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    }
+    const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
+    if (ok) return true;
+  }
+
+  // Fallback: many Facebook comment boxes submit on Enter.
+  composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  composer.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  return didDraftLikelySubmit(composer, expectedText, submitContext);
+}
+
+// #endregion
+
+// #region Image Attachment Pipeline
+
+function extractImagePayloadFromComment(rawComment) {
+  const original = (rawComment || '').trim();
+  if (!original) {
+    return { commentText: '', imageUrls: [] };
+  }
+
+  const segments = original
+    .split(/\s-\s|\s–\s|\s—\s/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const kept = [];
+  const urls = [];
+
+  const isLikelyImageUrl = (value) => {
+    const url = (value || '').toLowerCase();
+    if (!/^https?:\/\//.test(url)) return false;
+    if (/\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(url)) return true;
+    if (url.includes('files.catbox.moe')) return true;
+    if (url.includes('tmpfiles.org')) return true;
+    if (url.includes('0x0.st')) return true;
+    if (url.includes('transfer.sh')) return true;
+    return false;
+  };
+
+  const extractUrls = (text) => {
+    return (text.match(/https?:\/\/[^\s,]+/gi) || [])
+      .map((part) => part.trim())
+      .filter(Boolean);
+  };
+
+  for (const segment of segments) {
+    const lower = segment.toLowerCase();
+    const segmentUrls = extractUrls(segment);
+    const hasImageLabel = lower.includes('hình ảnh') || lower.includes('hinh anh') || lower.includes('image:') || lower.includes('img:');
+    const imageUrlsInSegment = segmentUrls.filter(isLikelyImageUrl);
+
+    if (hasImageLabel && imageUrlsInSegment.length) {
+      urls.push(...imageUrlsInSegment);
+      continue;
+    }
+
+    // Clipboard comments can contain bare image URL segments without explicit "Hình ảnh" label.
+    if (!hasImageLabel && segmentUrls.length && imageUrlsInSegment.length === segmentUrls.length && imageUrlsInSegment.length > 0) {
+      urls.push(...imageUrlsInSegment);
+      continue;
+    }
+
+    kept.push(segment);
+  }
+
+  return {
+    commentText: kept.join(' - ').trim(),
+    imageUrls: Array.from(new Set(urls))
+  };
+}
+
+function sanitizeFileName(name, fallback = 'image.jpg') {
+  const value = (name || '').trim().replace(/[^a-zA-Z0-9._-]/g, '_');
+  return value || fallback;
+}
+
+async function fetchImageAsFile(url, index) {
+  const response = await fetch(url, { method: 'GET', cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Cannot fetch image: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const parsedUrl = (() => {
+    try {
+      return new URL(url);
+    } catch {
+      return null;
+    }
+  })();
+
+  const fromPath = parsedUrl?.pathname?.split('/').pop() || '';
+  const fallbackExt = blob.type.includes('png') ? 'png' : (blob.type.includes('webp') ? 'webp' : 'jpg');
+  const fileName = sanitizeFileName(fromPath, `image-${index + 1}.${fallbackExt}`);
+  const fileType = blob.type || (fallbackExt === 'png' ? 'image/png' : (fallbackExt === 'webp' ? 'image/webp' : 'image/jpeg'));
+
+  return new File([blob], fileName, { type: fileType });
+}
+
+function findImageInputNearComposer(composer) {
+  if (!composer) return null;
+
+  const containers = [
+    composer.closest('form'),
+    composer.closest('[role="dialog"]'),
+    composer.closest('[role="article"]'),
+    composer.parentElement,
+    composer.parentElement?.parentElement,
+    document
+  ].filter(Boolean);
+
+  for (const container of containers) {
+    const inputs = Array.from(container.querySelectorAll('input[type="file"]'));
+    for (const input of inputs) {
+      const accept = (input.getAttribute('accept') || '').toLowerCase();
+      if (accept && !accept.includes('image')) continue;
+      if (input.disabled) continue;
+      return input;
+    }
+  }
+
+  return null;
+}
+
+function findPhotoAttachButtonNearComposer(composer) {
+  if (!composer) return null;
+
+  const containers = [
+    composer.closest('form'),
+    composer.closest('[role="dialog"]'),
+    composer.closest('[role="article"]'),
+    composer.parentElement,
+    composer.parentElement?.parentElement,
+    document
+  ].filter(Boolean);
+
+  const tokens = ['ảnh', 'hinh', 'photo', 'camera', 'image'];
+  const banned = ['video call', 'gọi video', 'reel'];
+
+  for (const container of containers) {
+    const buttons = Array.from(container.querySelectorAll('button, div[role="button"], span[role="button"]'));
+    for (const btn of buttons) {
+      if (!isVisible(btn)) continue;
+
+      const text = `${btn.textContent || ''} ${btn.getAttribute('aria-label') || ''} ${btn.getAttribute('title') || ''}`
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!text) continue;
+      if (banned.some((token) => text.includes(token))) continue;
+      if (tokens.some((token) => text.includes(token))) {
+        return btn;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function ensureImageInputReady(composer) {
+  let input = findImageInputNearComposer(composer);
+  if (input) return input;
+
+  const photoBtn = findPhotoAttachButtonNearComposer(composer);
+  if (photoBtn) {
+    photoBtn.click();
+    for (const waitMs of [120, 220, 420, 680]) {
+      await sleep(waitMs);
+      input = findImageInputNearComposer(composer);
+      if (input) return input;
+    }
+  }
+
+  return null;
+}
+
+async function attachImagesToComposer(composer, imageUrls) {
+  if (!Array.isArray(imageUrls) || !imageUrls.length) {
+    return { attached: 0, skipped: 0, reason: 'no-image-urls' };
+  }
+
+  const input = await ensureImageInputReady(composer);
+  if (!input) {
+    return { attached: 0, skipped: imageUrls.length, reason: 'missing-file-input' };
+  }
+
+  const files = [];
+  for (let i = 0; i < imageUrls.length; i++) {
+    try {
+      const file = await fetchImageAsFile(imageUrls[i], i);
+      files.push(file);
+    } catch {
+      // Skip broken image URLs and continue attaching remaining files.
+    }
+  }
+
+  if (!files.length) {
+    return { attached: 0, skipped: imageUrls.length, reason: 'fetch-failed' };
+  }
+
+  const dt = new DataTransfer();
+  for (const file of files) {
+    dt.items.add(file);
+  }
+
+  input.files = dt.files;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+
+  // Give Facebook some time to build attachment preview before submit.
+  await sleep(900);
+  return {
+    attached: files.length,
+    skipped: Math.max(imageUrls.length - files.length, 0),
+    reason: files.length ? 'attached' : 'unknown'
+  };
+}
+
+// #endregion
+
+// #region Runtime Snapshot & Composer Entry
 
 async function getStatusSnapshot() {
   const posts = getPostContainers();
@@ -863,6 +1245,10 @@ async function ensureComposerReady(post, autoOpenComposer) {
   return null;
 }
 
+// #endregion
+
+// #region Processed History & Post Selection
+
 async function getProcessedSet() {
   const stored = await getStorageValue(STORAGE_KEY);
   return new Set(Array.isArray(stored) ? stored : []);
@@ -910,8 +1296,14 @@ async function findNextAvailableCommentBox(options = {}) {
     allowScroll = true,
     maxScrollRounds = 8,
     mutateHistoryMarks = true,
-    updateStatus = false
+    updateStatus = false,
+    targetPostUrl = '',
+    lockPostFingerprint = '',
+    lockPostSessionKey = ''
   } = options;
+
+  const targetKey = extractFacebookPostKey(targetPostUrl);
+  const targetMode = Boolean(targetKey);
 
   const processedSet = await getProcessedSet();
   let blockedByHistory = 0;
@@ -924,18 +1316,29 @@ async function findNextAvailableCommentBox(options = {}) {
     const startNoComposer = noComposerCount;
 
     for (const post of posts) {
+      if (targetMode && !matchesTargetPostUrl(post, targetPostUrl)) {
+        continue;
+      }
+
       const postSessionKey = getSessionPostKey(post);
-      if (postSessionKey && sessionProcessedKeys.has(postSessionKey)) {
-        continue;
-      }
-
-      if (post.hasAttribute('data-processed')) {
-        continue;
-      }
-
       const fingerprint = getPostFingerprint(post);
 
-      if (!ignoreHistory && fingerprint && processedSet.has(fingerprint)) {
+      if (lockPostFingerprint && fingerprint !== lockPostFingerprint) {
+        continue;
+      }
+
+      if (lockPostSessionKey && postSessionKey !== lockPostSessionKey) {
+        continue;
+      }
+
+      if (!targetMode && postSessionKey && sessionProcessedKeys.has(postSessionKey)) {
+        continue;
+      }
+
+      if (!targetMode && post.hasAttribute('data-processed')) {
+        continue;
+      }
+      if (!targetMode && !ignoreHistory && fingerprint && processedSet.has(fingerprint)) {
         blockedByHistory += 1;
         continue;
       }
@@ -953,24 +1356,25 @@ async function findNextAvailableCommentBox(options = {}) {
       const ownerPost = findBestMatchedPostForNode(box, posts) || post;
       const ownerFingerprint = getPostFingerprint(ownerPost);
       const ownerSessionKey = getSessionPostKey(ownerPost);
+      const scannedSessionKey = postSessionKey;
 
-      if (ownerSessionKey && sessionProcessedKeys.has(ownerSessionKey)) {
+      if (!targetMode && ownerSessionKey && sessionProcessedKeys.has(ownerSessionKey)) {
         continue;
       }
 
-      if (!ignoreHistory && ownerFingerprint && processedSet.has(ownerFingerprint)) {
+      if (!targetMode && !ignoreHistory && ownerFingerprint && processedSet.has(ownerFingerprint)) {
         blockedByHistory += 1;
         continue;
       }
 
-      if (ownerPost.hasAttribute('data-processed')) {
+      if (!targetMode && ownerPost.hasAttribute('data-processed')) {
         continue;
       }
 
-      if (ownerSessionKey) {
+      if (!targetMode && ownerSessionKey) {
         sessionProcessedKeys.add(ownerSessionKey);
       }
-      if (scannedSessionKey && scannedSessionKey !== ownerSessionKey) {
+      if (!targetMode && scannedSessionKey && scannedSessionKey !== ownerSessionKey) {
         sessionProcessedKeys.add(scannedSessionKey);
       }
 
@@ -981,11 +1385,12 @@ async function findNextAvailableCommentBox(options = {}) {
         fingerprint: ownerFingerprint || fingerprint,
         scannedFingerprint: fingerprint,
         ownerSessionKey,
-        scannedSessionKey: postSessionKey,
+        scannedSessionKey,
         processedSet,
         totalCandidates,
         blockedByHistory,
-        scrollRounds: round
+        scrollRounds: round,
+        targetMode
       };
     }
 
@@ -1016,13 +1421,22 @@ async function findNextAvailableCommentBox(options = {}) {
   return { none: true, processedSet, totalCandidates, blockedByHistory, noComposerCount, scrollRounds: maxScrollRounds };
 }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+// #endregion
+
+// #region Message Handler
+
+if (window.__fbAutoCommentOnMessageHandler) {
+  chrome.runtime.onMessage.removeListener(window.__fbAutoCommentOnMessageHandler);
+}
+
+window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
   if (request.action === 'pingStatus') {
     (async () => {
       const snapshot = await getStatusSnapshot();
 
       sendResponse({
         status: 'ready',
+        contentScriptVersion: CONTENT_SCRIPT_VERSION,
         pageUrl: window.location.href,
         commentBoxCount: snapshot.commentBoxCount,
         loadedPostCount: snapshot.loadedPostCount,
@@ -1053,17 +1467,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   (async () => {
+    try {
     if (!request.comment) {
       sendResponse({ status: 'Missing comment content' });
       return;
     }
+
+    const targetPostUrl = (request.targetPostUrl || '').trim();
+    const targetMode = Boolean(targetPostUrl);
+    const keepOnCurrentPost = Boolean(request.keepOnCurrentPost);
+    const shouldMarkProcessed = request.markProcessed !== false;
+    const shouldScrollAfterSubmit = request.scrollAfterSubmit !== false;
+    const lockPostFingerprint = (request.lockPostFingerprint || '').trim();
+    const lockPostSessionKey = (request.lockPostSessionKey || '').trim();
 
     const target = await findNextAvailableCommentBox({
       ignoreHistory: Boolean(request.ignoreHistory),
       autoOpenComposer: true,
       allowScroll: true,
       maxScrollRounds: 4,
-      mutateHistoryMarks: true
+      mutateHistoryMarks: true,
+      targetPostUrl,
+      lockPostFingerprint,
+      lockPostSessionKey
     });
 
     if (target.none) {
@@ -1091,44 +1517,84 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     target.box.click();
     await sleep(100);
 
+    const imagePayload = extractImagePayloadFromComment(request.comment);
+    const explicitImageUrls = Array.isArray(request.imageUrls)
+      ? request.imageUrls.filter((url) => typeof url === 'string' && /^https?:\/\//i.test(url.trim())).map((url) => url.trim())
+      : [];
+    let finalCommentText = imagePayload.commentText;
+    const imageUrls = explicitImageUrls.length ? explicitImageUrls : imagePayload.imageUrls;
+
     // Clear existing text and set new comment
     target.box.textContent = '';
     await sleep(50);
-    
-    target.box.textContent = request.comment;
+
+    target.box.textContent = finalCommentText;
     target.box.dispatchEvent(new InputEvent('input', {
       bubbles: true,
       inputType: 'insertText',
-      data: request.comment
+      data: finalCommentText
     }));
+
+    const attachmentResult = await attachImagesToComposer(target.box, imageUrls);
+
+    if (imageUrls.length > 0 && attachmentResult.attached === 0) {
+      const fallbackImageText = `Hình ảnh: ${imageUrls.join(', ')}`;
+      finalCommentText = finalCommentText
+        ? `${finalCommentText} - ${fallbackImageText}`
+        : fallbackImageText;
+      target.box.textContent = finalCommentText;
+      target.box.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: finalCommentText
+      }));
+    }
 
     // Wait a bit for button to enable/appear
     await sleep(300);
 
-    // Find and click submit button
-    const submitBtn = findSubmitButtonNearComposer(target.box);
-    if (submitBtn) {
-      submitBtn.click();
-      // Wait for comment to be posted
-      await sleep(1200);
-    } else {
-      // Fallback: many Facebook comment boxes submit on Enter.
-      target.box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-      target.box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-      await sleep(900);
+    // Submit via button/form/keyboard fallback.
+    const didSubmit = await submitCommentFromComposer(target.box, finalCommentText, target.post);
+    if (!didSubmit) {
+      sendResponse({ status: 'SubmitFailed' });
+      return;
     }
 
-    // Mark only after submit so the next run skips posts that were actually handled.
-    await markPostAsProcessed(target);
-
-    const nextPost = findNextPostInFeed(target.post, getPostContainers());
-    if (nextPost) {
-      scrollPostIntoView(nextPost);
-    } else {
-      scrollFeedForNextBatch();
+    if (!targetMode && shouldMarkProcessed) {
+      // Mark only after submit so the next run skips posts that were actually handled.
+      await markPostAsProcessed(target);
     }
-    sendResponse({ status: 'Filled', scrollRounds: target.scrollRounds });
+
+    if (!targetMode && shouldScrollAfterSubmit) {
+      const nextPost = findNextPostInFeed(target.post, getPostContainers());
+      if (nextPost) {
+        scrollPostIntoView(nextPost);
+      } else {
+        scrollFeedForNextBatch();
+      }
+    }
+    sendResponse({
+      status: 'Filled',
+      scrollRounds: target.scrollRounds,
+      attachedImages: attachmentResult.attached,
+      skippedImages: attachmentResult.skipped,
+      attachmentReason: attachmentResult.reason,
+      targetMode,
+      keepOnCurrentPost,
+      postFingerprint: target.fingerprint || '',
+      postSessionKey: target.ownerSessionKey || target.scannedSessionKey || ''
+    });
+    } catch (error) {
+      sendResponse({
+        status: 'InternalError',
+        message: error?.message || String(error || 'Unknown error')
+      });
+    }
   })();
 
   return true;
-});
+};
+
+chrome.runtime.onMessage.addListener(window.__fbAutoCommentOnMessageHandler);
+
+// #endregion

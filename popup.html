@@ -303,6 +303,180 @@
     .guide-list li {
       margin-bottom: 6px;
     }
+
+    .clipboard-panel {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px dashed #f1a9d0;
+      background: #fff7fc;
+    }
+
+    .clipboard-panel .clipboard-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .clipboard-panel .clipboard-head .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #clearSelectedClipboardBtn {
+      width: auto;
+      margin-bottom: 0;
+      padding: 7px 10px;
+      font-size: 12px;
+      background: linear-gradient(180deg, #b16995 0%, #8f4f78 100%);
+      box-shadow: 0 8px 16px rgba(143, 79, 120, 0.22);
+    }
+
+    #selectedClipboardCount {
+      font-size: 11px;
+      color: #7c305c;
+      font-weight: 700;
+    }
+
+    .clipboard-panel .clipboard-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8d1459;
+    }
+
+    .clipboard-settings {
+      display: grid;
+      grid-template-columns: 1fr 140px;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .clipboard-settings .clipboard-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #7c305c;
+      padding: 8px 10px;
+      border: 1px solid #f4c5df;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .clipboard-settings .clipboard-toggle input {
+      width: auto;
+      margin: 0;
+      padding: 0;
+      box-shadow: none;
+    }
+
+    .clipboard-settings input {
+      margin-bottom: 0;
+    }
+
+    .clipboard-panel textarea {
+      min-height: 76px;
+      margin-bottom: 8px;
+    }
+
+    .clipboard-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+      max-height: 180px;
+      overflow: auto;
+    }
+
+    .clipboard-item {
+      border: 1px solid #f4c5df;
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+    }
+
+    .clipboard-item-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .clipboard-item-top input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      padding: 0;
+      box-shadow: none;
+    }
+
+    .clipboard-item-top .label {
+      font-size: 11px;
+      color: #7c305c;
+      font-weight: 700;
+    }
+
+    .clipboard-item-text {
+      font-size: 11px;
+      color: #5d2647;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 8px;
+    }
+
+    .clipboard-item-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .clipboard-item-actions button {
+      margin-bottom: 0;
+      padding: 7px 9px;
+      font-size: 11px;
+    }
+
+    .clipboard-empty {
+      font-size: 11px;
+      color: #8b4a70;
+      padding: 8px 0 2px;
+    }
+
+    .mode-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mode-tab {
+      margin-bottom: 0;
+      background: linear-gradient(180deg, #c98eb0 0%, #ab6d93 100%);
+      box-shadow: 0 8px 14px rgba(171, 109, 147, 0.2);
+    }
+
+    .mode-tab.active {
+      background: linear-gradient(180deg, var(--rose-500) 0%, var(--rose-600) 100%);
+      box-shadow: 0 10px 20px rgba(213, 46, 138, 0.28);
+    }
+
+    .mode-panel {
+      display: none;
+    }
+
+    .mode-panel.active {
+      display: block;
+    }
+
+    .mini-hint {
+      margin: -4px 0 10px;
+      font-size: 11px;
+      color: #8b4a70;
+      line-height: 1.35;
+    }
   </style>
 </head>
 <body>
@@ -316,34 +490,82 @@
 
   <div id="commentTab" class="tab-content active">
     <div class="container">
-      <div class="section-title">Nhập thông tin để tạo comment</div>
-      <textarea id="description" placeholder="Mô tả (bắt buộc)" rows="3"></textarea>
-
-      <div class="field-grid">
-        <input type="text" id="fees" placeholder="Tiền dịch vụ, tiền xe, tiền điện">
-        <input type="text" id="price" placeholder="Giá">
-        <input type="text" id="amenities" placeholder="Tiện nghi">
-        <input type="text" id="images" placeholder="Hình ảnh">
+      <div class="mode-tabs">
+        <button id="formModeTabBtn" type="button" class="mode-tab active">Menu 1: Theo Form</button>
+        <button id="clipboardModeTabBtn" type="button" class="mode-tab">Menu 2: Theo Clipboard</button>
       </div>
 
-      <input type="text" id="contactPhone" placeholder="SĐT liên lạc (tùy chọn)">
+      <div id="formModePanel" class="mode-panel active">
+        <div class="section-title">Menu 1: 1 comment form cho nhiều post</div>
+        <div class="mini-hint">Tạo 1 comment từ form, bot sẽ dùng comment đó cho số post bạn nhập.</div>
 
-      <div class="upload-panel">
-        <div class="upload-actions">
-          <button id="pickImagesBtn" type="button">Chọn ảnh từ máy</button>
+        <textarea id="description" placeholder="Mô tả (bắt buộc)" rows="3"></textarea>
+
+        <div class="field-grid">
+          <input type="text" id="fees" placeholder="Tiền dịch vụ, tiền xe, tiền điện">
+          <input type="text" id="price" placeholder="Giá">
+          <input type="text" id="amenities" placeholder="Tiện nghi">
+          <input type="text" id="images" placeholder="Hình ảnh">
         </div>
-        <input id="imageFileInput" type="file" accept="image/*" multiple style="display:none;">
-        <div id="pasteArea" class="paste-area" tabindex="0">Bạn có thể Ctrl+V trực tiếp trong ô Hình ảnh hoặc dán tại đây</div>
-        <div id="uploadStatus"></div>
+
+        <input type="text" id="contactPhone" placeholder="SĐT liên lạc (tùy chọn)">
+        <input type="text" id="targetPostUrl" placeholder="URL bài viết cần comment (tùy chọn)">
+
+        <div class="upload-panel">
+          <div class="upload-actions">
+            <button id="pickImagesBtn" type="button">Chọn ảnh từ máy</button>
+          </div>
+          <input id="imageFileInput" type="file" accept="image/*" multiple style="display:none;">
+          <div id="pasteArea" class="paste-area" tabindex="0">Bạn có thể Ctrl+V trực tiếp trong ô Hình ảnh hoặc dán tại đây</div>
+          <div id="uploadStatus"></div>
+        </div>
+
+        <input type="number" id="numPosts" placeholder="Số post" min="1" max="200">
+
+        <div class="button-group">
+          <button id="saveFormToClipboardBtn" type="button">Lưu comment form vào clipboard</button>
+          <button id="startFormBtn" type="button">Chạy Menu 1</button>
+        </div>
       </div>
 
-      <input type="number" id="numPosts" placeholder="Số post" min="1" max="10">
+      <div id="clipboardModePanel" class="mode-panel">
+        <div class="section-title">Menu 2: Clipboard nhiều comment mỗi post</div>
+        <div class="mini-hint">Ví dụ nhập 3 post và 4 cmt thì mỗi post chạy 4 comment khác nhau, tổng 12 comment.</div>
 
-      <div class="button-group">
-        <button id="startBtn">Bắt đầu điền comment</button>
-        <button id="nextBtn" disabled>Điền comment tiếp theo</button>
+        <input type="text" id="clipboardTargetPostUrl" placeholder="URL bài viết cần comment (tùy chọn)">
+        <div class="field-grid">
+          <input type="number" id="clipboardNumPosts" placeholder="Số post" min="1" max="200">
+          <input type="number" id="clipboardCommentsPerPost" placeholder="Số cmt / post" min="1" max="200">
+        </div>
+
+        <button id="startClipboardBtn" type="button">Chạy Menu 2</button>
+
+        <div class="clipboard-panel">
+        <div class="clipboard-head">
+          <div class="clipboard-title">Clipboard comment</div>
+          <div class="head-actions">
+            <div id="selectedClipboardCount">Đã chọn: 0</div>
+            <button id="clearSelectedClipboardBtn" type="button">Bỏ chọn</button>
+            <button id="saveClipboardBtn" type="button" style="width:auto; min-width: 132px; margin-bottom:0; padding:7px 10px; font-size:12px;">Lưu comment</button>
+          </div>
+        </div>
+        <div class="clipboard-settings">
+          <label class="clipboard-toggle" title="Bật để dùng comment đã lưu trong clipboard">
+            <input id="useClipboardMode" type="checkbox">
+            <span>Dùng clipboard</span>
+          </label>
+          <input id="clipboardCount" type="number" min="1" max="200" placeholder="Số cmt">
+        </div>
+        <textarea id="clipboardInput" placeholder="Dán hoặc gõ comment hoàn chỉnh để lưu, rồi dùng lại khi cần." rows="3"></textarea>
+        <div class="button-group" style="margin-bottom: 8px;">
+          <button id="useClipboardBtn" type="button">Dùng comment đã nhập</button>
+          <button id="clearClipboardInputBtn" type="button">Xóa ô nhập</button>
+        </div>
+        <div id="clipboardList" class="clipboard-list"></div>
+        </div>
       </div>
 
+      <button id="nextBtn" type="button" disabled style="display:none;">Điền comment tiếp theo</button>
       <div id="status"></div>
       <div class="hint">Mẹo: Extension sẽ tự né post đã xử lý ngay cả khi bạn reload trang.</div>
     </div>
@@ -385,6 +607,9 @@
         <li><strong>Tiện nghi:</strong> Ví dụ <strong>máy lạnh, tủ lạnh, WC riêng</strong>.</li>
         <li><strong>Hình ảnh:</strong> Dán link ảnh, hoặc Ctrl+V ảnh trực tiếp để extension tự upload và chèn link.</li>
         <li><strong>SĐT liên lạc:</strong> Ví dụ <strong>09xxxxxxxx</strong>. Bỏ trống nếu không muốn hiện.</li>
+        <li><strong>URL bài viết:</strong> Dán link bài viết Facebook để bot comment đúng vào bài đó.</li>
+        <li><strong>Dùng clipboard:</strong> Bật nếu muốn lấy comment từ danh sách đã lưu thay vì tạo từ form.</li>
+        <li><strong>Số cmt:</strong> Số comment khác nhau lấy từ clipboard cho lần chạy hiện tại.</li>
         <li><strong>Số post:</strong> Số lượng comment cần điền.</li>
         <li><strong>Nút Bắt đầu điền comment:</strong> Điền comment đầu tiên.</li>
         <li><strong>Nút Điền comment tiếp theo:</strong> Điền sang post tiếp theo chưa xử lý.</li>
