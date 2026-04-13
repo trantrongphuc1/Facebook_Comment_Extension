@@ -9,6 +9,11 @@ const STORAGE_KEY_TARGET_POST = 'targetPostUrl';
 const UPLOAD_TIMEOUT_MS = 9000;
 const MAX_UPLOAD_DIMENSION = 1600;
 const JPEG_QUALITY = 0.82;
+const MAX_CLIPBOARD_IMAGES_PER_ITEM = 6;
+const MAX_CLIPBOARD_IMAGE_BYTES = 420 * 1024;
+
+let pendingClipboardImages = [];
+let editingClipboardItemId = null;
 
 const UPLOAD_PROVIDERS = [
   {
@@ -261,26 +266,33 @@ function getClipboardCount() {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function createRunState({ targetPosts, commentsPerPost, commentSet, targetPostUrl }) {
+function createRunState({ targetPosts, commentsPerPost, commentPayloadSet, targetPostUrl }) {
   return {
     active: true,
     targetPosts,
     commentsPerPost,
-    commentSet,
+    commentPayloadSet,
     targetPostUrl: targetPostUrl || '',
     targetTabId: null,
     useBackgroundTab: Boolean(targetPostUrl),
     postIndex: 0,
     commentIndexInPost: 0,
     lockPostFingerprint: '',
-    lockPostSessionKey: ''
+    lockPostSessionKey: '',
+    lastCompletedPostFingerprint: '',
+    lastCompletedPostSessionKey: ''
   };
 }
 
 function getCurrentRunComment() {
-  if (!runState || !runState.commentSet?.length) return '';
-  const idx = Math.max(0, Math.min(runState.commentIndexInPost, runState.commentSet.length - 1));
-  return runState.commentSet[idx] || '';
+  const payload = getCurrentRunPayload();
+  return payload?.text || '';
+}
+
+function getCurrentRunPayload() {
+  if (!runState || !runState.commentPayloadSet?.length) return null;
+  const idx = Math.max(0, Math.min(runState.commentIndexInPost, runState.commentPayloadSet.length - 1));
+  return runState.commentPayloadSet[idx] || null;
 }
 
 function shouldStayOnCurrentPost() {
@@ -322,6 +334,41 @@ function updateSelectedClipboardCount() {
   counter.textContent = `Đã chọn: ${selectedClipboardIds.size}`;
 }
 
+function updateSelectedClipboardImageCount() {
+  const counter = document.getElementById('selectedClipboardImageCount');
+  if (!counter) return;
+  counter.textContent = `Ảnh gắn mới: ${pendingClipboardImages.length}`;
+}
+
+function setClipboardImageStatus(message, isError = false) {
+  const statusEl = document.getElementById('clipboardImageStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.style.color = isError ? '#b42318' : '#7c305c';
+}
+
+function updateClipboardEditUI() {
+  const saveBtn = document.getElementById('saveClipboardBtn');
+  const cancelBtn = document.getElementById('cancelClipboardEditBtn');
+  if (saveBtn) {
+    saveBtn.textContent = editingClipboardItemId ? 'Cập nhật comment' : 'Lưu comment';
+  }
+  if (cancelBtn) {
+    cancelBtn.style.display = editingClipboardItemId ? 'inline-block' : 'none';
+  }
+}
+
+function clearClipboardEditingState(resetInput = false) {
+  editingClipboardItemId = null;
+  if (resetInput) {
+    const clipboardInput = getClipboardInput();
+    if (clipboardInput) {
+      clipboardInput.value = '';
+    }
+  }
+  updateClipboardEditUI();
+}
+
 async function getClipboardItems() {
   return new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEY_CLIPBOARD], (result) => {
@@ -336,6 +383,14 @@ async function saveClipboardItems(items) {
   return new Promise((resolve) => {
     chrome.storage.local.set({ [STORAGE_KEY_CLIPBOARD]: normalized }, () => resolve());
   });
+}
+
+function normalizeClipboardImageDataUrls(imageDataUrls) {
+  if (!Array.isArray(imageDataUrls)) return [];
+  const urls = imageDataUrls
+    .map((url) => (typeof url === 'string' ? url.trim() : ''))
+    .filter((url) => /^(data:image\/|https?:\/\/)/i.test(url));
+  return Array.from(new Set(urls)).slice(0, MAX_CLIPBOARD_IMAGES_PER_ITEM);
 }
 
 function generateClipboardId(text) {
@@ -367,7 +422,7 @@ function buildCommentFromCurrentForm(index = 0) {
   if (images) parts.push(`Hình ảnh: ${images}`);
   if (contactPhone) parts.push(`Liên hệ: ${contactPhone}`);
 
-  return parts.filter(Boolean).join(' - ').trim();
+  return parts.filter(Boolean).join('\n').trim();
 }
 
 function fillFormFromClipboardText(text) {
@@ -393,6 +448,66 @@ function fillFormFromClipboardText(text) {
   saveFormData();
 }
 
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Không chuyển được ảnh sang data URL'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function encodeImageForClipboardStorage(file) {
+  if (!file || !file.type?.startsWith('image/')) {
+    return null;
+  }
+
+  try {
+    const image = await loadImageFromFile(file);
+    const ratio = Math.min(1, 1200 / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * ratio));
+    const height = Math.max(1, Math.round(image.height * ratio));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(image, 0, 0, width, height);
+
+    let quality = 0.82;
+    let blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+
+    while (blob && blob.size > MAX_CLIPBOARD_IMAGE_BYTES && quality > 0.56) {
+      quality -= 0.08;
+      blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    }
+
+    if (!blob) {
+      return null;
+    }
+
+    return await blobToDataUrl(blob);
+  } catch {
+    return null;
+  }
+}
+
+async function encodeClipboardImages(files) {
+  const selected = Array.isArray(files) ? files.slice(0, MAX_CLIPBOARD_IMAGES_PER_ITEM) : [];
+  const encoded = [];
+
+  for (const file of selected) {
+    const dataUrl = await encodeImageForClipboardStorage(file);
+    if (dataUrl) {
+      encoded.push(dataUrl);
+    }
+  }
+
+  return normalizeClipboardImageDataUrls(encoded);
+}
+
 async function renderClipboardList() {
   const listEl = document.getElementById('clipboardList');
   if (!listEl) return;
@@ -415,6 +530,10 @@ async function renderClipboardList() {
     if (!items.some((item) => item.id === selectedId)) {
       selectedClipboardIds.delete(selectedId);
     }
+  }
+
+  if (editingClipboardItemId && !items.some((item) => item.id === editingClipboardItemId)) {
+    clearClipboardEditingState();
   }
 
   for (const item of items) {
@@ -447,6 +566,13 @@ async function renderClipboardList() {
     textEl.className = 'clipboard-item-text';
     textEl.textContent = item.text;
 
+    const imageCount = Array.isArray(item.imageDataUrls) ? item.imageDataUrls.length : 0;
+    const metaEl = document.createElement('div');
+    metaEl.className = 'hint';
+    metaEl.style.marginTop = '6px';
+    metaEl.style.marginBottom = '0';
+    metaEl.textContent = `Ảnh đã gắn: ${imageCount}`;
+
     const actionsEl = document.createElement('div');
     actionsEl.className = 'clipboard-item-actions';
 
@@ -456,7 +582,47 @@ async function renderClipboardList() {
     useBtn.addEventListener('click', () => {
       fillFormFromClipboardText(item.text);
       const status = document.getElementById('status');
-      if (status) status.textContent = 'Đã nạp comment đã lưu vào ô Mô tả.';
+      if (status) status.textContent = `Đã nạp comment đã lưu vào ô Mô tả${imageCount ? ` (kèm ${imageCount} ảnh)` : ''}.`;
+    });
+
+    const attachBtn = document.createElement('button');
+    attachBtn.type = 'button';
+    attachBtn.textContent = 'Gắn ảnh';
+
+    const attachInput = document.createElement('input');
+    attachInput.type = 'file';
+    attachInput.accept = 'image/*';
+    attachInput.multiple = true;
+    attachInput.style.display = 'none';
+
+    attachBtn.addEventListener('click', () => {
+      attachInput.click();
+    });
+
+    attachInput.addEventListener('change', async (event) => {
+      const files = Array.from(event.target.files || []);
+      if (!files.length) return;
+
+      const encodedImages = await encodeClipboardImages(files);
+      if (!encodedImages.length) {
+        setUploadStatus('Không mã hóa được ảnh để lưu. Ảnh cũ vẫn được giữ nguyên.', true);
+        attachInput.value = '';
+        return;
+      }
+
+      const nextItems = items.map((entry) => {
+        if (entry.id !== item.id) return entry;
+        return {
+          ...entry,
+          imageDataUrls: encodedImages,
+          updatedAt: new Date().toISOString()
+        };
+      });
+
+      await saveClipboardItems(nextItems);
+      await renderClipboardList();
+      setUploadStatus(`Đã cập nhật ${encodedImages.length} ảnh cho comment đã lưu.`);
+      attachInput.value = '';
     });
 
     const copyBtn = document.createElement('button');
@@ -483,31 +649,66 @@ async function renderClipboardList() {
       await renderClipboardList();
     });
 
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.textContent = 'Sửa';
+    editBtn.addEventListener('click', () => {
+      const clipboardInput = getClipboardInput();
+      if (clipboardInput) {
+        clipboardInput.value = item.text || '';
+        clipboardInput.focus();
+      }
+
+      editingClipboardItemId = item.id;
+      updateClipboardEditUI();
+      setUploadStatus('Đang sửa comment trong ô nhập. Bấm Cập nhật comment để lưu.');
+    });
+
     actionsEl.appendChild(useBtn);
+    actionsEl.appendChild(attachBtn);
+    actionsEl.appendChild(editBtn);
     actionsEl.appendChild(copyBtn);
     actionsEl.appendChild(deleteBtn);
 
     itemEl.appendChild(topEl);
     itemEl.appendChild(textEl);
+    itemEl.appendChild(metaEl);
     itemEl.appendChild(actionsEl);
+    itemEl.appendChild(attachInput);
     listEl.appendChild(itemEl);
   }
 
   updateSelectedClipboardCount();
 }
 
-async function addClipboardItem(text) {
+async function addClipboardItem(text, imageDataUrls = []) {
   const normalized = (text || '').trim();
   if (!normalized) return false;
 
   const items = await getClipboardItems();
-  const exists = items.some((item) => item.text === normalized);
-  if (exists) return true;
+  const sanitizedImages = normalizeClipboardImageDataUrls(imageDataUrls);
+  const existingIndex = items.findIndex((item) => item.text === normalized);
+
+  if (existingIndex >= 0) {
+    const existing = items[existingIndex];
+    if (sanitizedImages.length) {
+      items[existingIndex] = {
+        ...existing,
+        imageDataUrls: sanitizedImages,
+        updatedAt: new Date().toISOString()
+      };
+      await saveClipboardItems(items);
+      await renderClipboardList();
+    }
+    return true;
+  }
 
   items.unshift({
     id: generateClipboardId(normalized),
     text: normalized,
-    createdAt: new Date().toISOString()
+    imageDataUrls: sanitizedImages,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   });
 
   await saveClipboardItems(items);
@@ -515,16 +716,22 @@ async function addClipboardItem(text) {
   return true;
 }
 
-async function buildCommentsFromClipboard(limit) {
+async function buildCommentPayloadsFromClipboard(limit) {
   const items = await getClipboardItems();
   const usable = items
-    .map((item) => (item?.text || '').trim())
-    .filter(Boolean);
+    .map((item) => ({
+      text: (item?.text || '').trim(),
+      imageUrls: normalizeClipboardImageDataUrls(item?.imageDataUrls || [])
+    }))
+    .filter((item) => Boolean(item.text));
 
   const selected = items
     .filter((item) => selectedClipboardIds.has(item.id))
-    .map((item) => (item?.text || '').trim())
-    .filter(Boolean);
+    .map((item) => ({
+      text: (item?.text || '').trim(),
+      imageUrls: normalizeClipboardImageDataUrls(item?.imageDataUrls || [])
+    }))
+    .filter((item) => Boolean(item.text));
 
   const source = selected.length ? selected : usable;
 
@@ -537,6 +744,126 @@ async function buildCommentsFromClipboard(limit) {
   }
 
   return source;
+}
+
+function extractImagePayloadFromCommentText(rawComment) {
+  const original = (rawComment || '').trim();
+  if (!original) {
+    return { commentText: '', imageUrls: [] };
+  }
+
+  const segments = original
+    .split(/\s-\s|\s–\s|\s—\s|\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const kept = [];
+  const urls = [];
+
+  const isLikelyImageUrl = (value) => {
+    const url = (value || '').toLowerCase();
+    if (!/^https?:\/\//.test(url)) return false;
+    if (/\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(url)) return true;
+    if (url.includes('files.catbox.moe')) return true;
+    if (url.includes('tmpfiles.org')) return true;
+    if (url.includes('0x0.st')) return true;
+    if (url.includes('transfer.sh')) return true;
+    return false;
+  };
+
+  const extractUrls = (text) => {
+    return (text.match(/https?:\/\/[^\s,]+/gi) || [])
+      .map((part) => part.trim())
+      .filter(Boolean);
+  };
+
+  for (const segment of segments) {
+    const lower = segment.toLowerCase();
+    const segmentUrls = extractUrls(segment);
+    const hasImageLabel = lower.includes('hình ảnh') || lower.includes('hinh anh') || lower.includes('image:') || lower.includes('img:');
+    const imageUrlsInSegment = segmentUrls.filter(isLikelyImageUrl);
+
+    if (hasImageLabel && imageUrlsInSegment.length) {
+      urls.push(...imageUrlsInSegment);
+      continue;
+    }
+
+    if (!hasImageLabel && segmentUrls.length && imageUrlsInSegment.length === segmentUrls.length && imageUrlsInSegment.length > 0) {
+      urls.push(...imageUrlsInSegment);
+      continue;
+    }
+
+    kept.push(segment);
+  }
+
+  return {
+    commentText: kept.join('\n').trim(),
+    imageUrls: Array.from(new Set(urls))
+  };
+}
+
+async function fetchImageUrlAsDataUrl(url) {
+  const normalizedUrl = `${url || ''}`.trim().replace(/[\])}>.,;!?]+$/g, '');
+  const response = await fetch(normalizedUrl, {
+    method: 'GET',
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer'
+  });
+  if (!response.ok) {
+    throw new Error(`Không tải được ảnh: ${response.status}`);
+  }
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) {
+    throw new Error('URL không trả về dữ liệu ảnh');
+  }
+  return blobToDataUrl(blob);
+}
+
+async function hydrateClipboardPayloadImages(commentPayloads) {
+  const source = Array.isArray(commentPayloads) ? commentPayloads : [];
+  const hydrated = [];
+  let hydratedCount = 0;
+  let failedCount = 0;
+
+  for (const payload of source) {
+    const normalizedPayloadUrls = normalizeClipboardImageDataUrls(payload?.imageUrls || []);
+    const fallbackFromText = extractImagePayloadFromCommentText(payload?.text || '').imageUrls;
+    const candidateUrls = normalizedPayloadUrls.length ? normalizedPayloadUrls : fallbackFromText;
+
+    if (!candidateUrls.length) {
+      hydrated.push(payload);
+      continue;
+    }
+
+    const materialized = [];
+    for (const url of candidateUrls.slice(0, MAX_CLIPBOARD_IMAGES_PER_ITEM)) {
+      if (/^data:image\//i.test(url)) {
+        materialized.push(url);
+        hydratedCount += 1;
+        continue;
+      }
+
+      try {
+        const dataUrl = await fetchImageUrlAsDataUrl(url);
+        materialized.push(dataUrl);
+        hydratedCount += 1;
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    hydrated.push({
+      ...payload,
+      imageUrls: normalizeClipboardImageDataUrls(materialized)
+    });
+  }
+
+  if (failedCount > 0) {
+    setUploadStatus(`Có ${failedCount} ảnh không chuyển được sang ảnh đính kèm. Hãy bấm Gắn ảnh để chọn lại ảnh cho comment đó.`, true);
+  } else if (hydratedCount > 0) {
+    setUploadStatus(`Đã chuẩn bị ${hydratedCount} ảnh đính kèm từ clipboard.`);
+  }
+
+  return hydrated;
 }
 
 function waitForTabUpdated(tabId, expectedUrl, timeoutMs = 30000) {
@@ -736,8 +1063,8 @@ async function resolveRunTabId() {
 async function initializeClipboardMenu() {
   const clipboardInput = getClipboardInput();
   const saveBtn = document.getElementById('saveClipboardBtn');
-  const useBtn = document.getElementById('useClipboardBtn');
   const clearBtn = document.getElementById('clearClipboardInputBtn');
+  const cancelEditBtn = document.getElementById('cancelClipboardEditBtn');
   const clearSelectedBtn = document.getElementById('clearSelectedClipboardBtn');
 
   if (saveBtn) {
@@ -748,30 +1075,63 @@ async function initializeClipboardMenu() {
         return;
       }
 
-      await addClipboardItem(text);
-      if (clipboardInput) clipboardInput.value = text;
-      setUploadStatus('Đã lưu comment vào clipboard.');
-    });
-  }
+      if (editingClipboardItemId) {
+        const items = await getClipboardItems();
+        const existing = items.find((entry) => entry.id === editingClipboardItemId);
+        if (!existing) {
+          clearClipboardEditingState();
+          setUploadStatus('Comment cần sửa không còn tồn tại.', true);
+          await renderClipboardList();
+          return;
+        }
 
-  if (useBtn) {
-    useBtn.addEventListener('click', async () => {
-      const text = (clipboardInput?.value || '').trim();
-      if (!text) {
-        setUploadStatus('Hãy nhập comment hoàn chỉnh vào ô clipboard trước.', true);
+        const nextImages = pendingClipboardImages.length
+          ? normalizeClipboardImageDataUrls(pendingClipboardImages)
+          : normalizeClipboardImageDataUrls(existing.imageDataUrls || []);
+
+        const nextItems = items.map((entry) => {
+          if (entry.id !== editingClipboardItemId) return entry;
+          return {
+            ...entry,
+            text,
+            imageDataUrls: nextImages,
+            updatedAt: new Date().toISOString()
+          };
+        });
+
+        await saveClipboardItems(nextItems);
+        await renderClipboardList();
+        setUploadStatus('Đã cập nhật comment đã lưu.');
+        pendingClipboardImages = [];
+        updateSelectedClipboardImageCount();
+        setClipboardImageStatus('');
+        clearClipboardEditingState(true);
         return;
       }
 
-      await addClipboardItem(text);
-      fillFormFromClipboardText(text);
-      setUploadStatus('Đã nạp comment clipboard vào form.');
+      await addClipboardItem(text, pendingClipboardImages);
+      if (clipboardInput) clipboardInput.value = text;
+      setUploadStatus(`Đã lưu comment vào clipboard${pendingClipboardImages.length ? ` (kèm ${pendingClipboardImages.length} ảnh)` : ''}.`);
+      pendingClipboardImages = [];
+      updateSelectedClipboardImageCount();
+      setClipboardImageStatus('');
     });
   }
 
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
       if (clipboardInput) clipboardInput.value = '';
+      if (editingClipboardItemId) {
+        clearClipboardEditingState();
+      }
       setUploadStatus('Đã xóa ô nhập clipboard.');
+    });
+  }
+
+  if (cancelEditBtn) {
+    cancelEditBtn.addEventListener('click', () => {
+      clearClipboardEditingState(true);
+      setUploadStatus('Đã hủy chế độ sửa comment.');
     });
   }
 
@@ -791,6 +1151,36 @@ async function initializeClipboardMenu() {
 
   await renderClipboardList();
   updateSelectedClipboardCount();
+  updateClipboardEditUI();
+}
+
+function initializeClipboardImagePicker() {
+  const pickBtn = document.getElementById('pickClipboardImagesBtn');
+  const fileInput = document.getElementById('clipboardImageFileInput');
+  if (!pickBtn || !fileInput) return;
+
+  pickBtn.addEventListener('click', () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+
+    pendingClipboardImages = await encodeClipboardImages(files);
+    if (!pendingClipboardImages.length) {
+      setClipboardImageStatus('Không xử lý được ảnh đã chọn, vui lòng thử ảnh khác.', true);
+      updateSelectedClipboardImageCount();
+      fileInput.value = '';
+      return;
+    }
+
+    updateSelectedClipboardImageCount();
+    setClipboardImageStatus(`Đã chọn ${pendingClipboardImages.length} ảnh để gắn vào comment sắp lưu.`);
+    fileInput.value = '';
+  });
+
+  updateSelectedClipboardImageCount();
 }
 
 function parseImageUrls(raw) {
@@ -1184,10 +1574,14 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
       {
         action: 'fillNext',
         comment: runState ? getCurrentRunComment() : comments[currentIndex],
-        imageUrls: commentImageUrls,
+        imageUrls: runState
+          ? (getCurrentRunPayload()?.imageUrls || [])
+          : commentImageUrls,
         targetPostUrl: runState?.targetPostUrl || getTargetPostUrl(),
         lockPostFingerprint: runState?.lockPostFingerprint || '',
         lockPostSessionKey: runState?.lockPostSessionKey || '',
+        excludePostFingerprint: runState?.lastCompletedPostFingerprint || '',
+        excludePostSessionKey: runState?.lastCompletedPostSessionKey || '',
         keepOnCurrentPost: runState ? shouldStayOnCurrentPost() : false,
         markProcessed: runState ? !shouldStayOnCurrentPost() : true,
         scrollAfterSubmit: runState ? !shouldStayOnCurrentPost() : true,
@@ -1304,6 +1698,8 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
             runState.commentIndexInPost += 1;
             updateRunProgressStatus();
           } else {
+            runState.lastCompletedPostFingerprint = response.postFingerprint || runState.lockPostFingerprint || '';
+            runState.lastCompletedPostSessionKey = response.postSessionKey || runState.lockPostSessionKey || '';
             runState.postIndex += 1;
             runState.commentIndexInPost = 0;
             runState.lockPostFingerprint = '';
@@ -1323,17 +1719,30 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
 }
 
 async function startRunWithConfig({ targetPosts, commentsPerPost, commentSet, targetPostUrl }) {
-  if (!Array.isArray(commentSet) || !commentSet.length) {
+  const payloadSet = Array.isArray(commentSet)
+    ? commentSet.map((entry) => {
+      if (typeof entry === 'string') {
+        return { text: entry, imageUrls: [] };
+      }
+
+      return {
+        text: (entry?.text || '').trim(),
+        imageUrls: normalizeClipboardImageDataUrls(entry?.imageUrls || [])
+      };
+    }).filter((entry) => Boolean(entry.text))
+    : [];
+
+  if (!payloadSet.length) {
     document.getElementById('status').textContent = 'Không có comment nào để chạy.';
     return;
   }
 
-  comments = commentSet.slice();
+  comments = payloadSet.map((entry) => entry.text);
   currentIndex = 0;
   runState = createRunState({
     targetPosts,
     commentsPerPost,
-    commentSet: commentSet.slice(),
+    commentPayloadSet: payloadSet,
     targetPostUrl
   });
 
@@ -1396,11 +1805,11 @@ async function startFormMenu() {
   if (amenities) parts.push(`Tiện nghi: ${amenities}`);
   if (contactPhone) parts.push(`Liên hệ: ${contactPhone}`);
 
-  const singleComment = parts.join(' - ');
+  const singleComment = parts.join('\n');
   await startRunWithConfig({
     targetPosts: numPosts,
     commentsPerPost: 1,
-    commentSet: [singleComment],
+    commentSet: [{ text: singleComment, imageUrls: commentImageUrls.slice() }],
     targetPostUrl
   });
 }
@@ -1425,11 +1834,14 @@ async function startClipboardMenu() {
     return;
   }
 
-  const selectedComments = await buildCommentsFromClipboard(commentsPerPost);
-  if (selectedComments.length < commentsPerPost) {
+  const selectedCommentsRaw = await buildCommentPayloadsFromClipboard(commentsPerPost);
+  if (selectedCommentsRaw.length < commentsPerPost) {
     document.getElementById('status').textContent = 'Số comment đã chọn trong clipboard không đủ.';
     return;
   }
+
+  document.getElementById('status').textContent = 'Đang chuẩn bị ảnh cho comment clipboard...';
+  const selectedComments = await hydrateClipboardPayloadImages(selectedCommentsRaw);
 
   commentImageUrls = [];
   await startRunWithConfig({
@@ -1542,5 +1954,6 @@ initializeImageUpload();
 initializeApiCheckMenu();
 initializeTabs();
 initializeSmartSkipMenu();
+initializeClipboardImagePicker();
 initializeClipboardMenu();
 initializeCommentModeTabs();

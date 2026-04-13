@@ -335,6 +335,27 @@
       box-shadow: 0 8px 16px rgba(143, 79, 120, 0.22);
     }
 
+    .clipboard-mini-btn {
+      width: auto;
+      min-width: 96px;
+      margin-bottom: 0;
+      padding: 7px 10px;
+      font-size: 12px;
+    }
+
+    .hidden-file-input {
+      display: none;
+    }
+
+    .clipboard-image-status {
+      margin-top: 0;
+      margin-bottom: 8px;
+    }
+
+    .is-hidden {
+      display: none;
+    }
+
     #selectedClipboardCount {
       font-size: 11px;
       color: #7c305c;
@@ -544,21 +565,18 @@
         <div class="clipboard-head">
           <div class="clipboard-title">Clipboard comment</div>
           <div class="head-actions">
+            <div id="selectedClipboardImageCount">Ảnh gắn mới: 0</div>
+            <button id="pickClipboardImagesBtn" type="button" class="clipboard-mini-btn">Chọn ảnh</button>
+            <input id="clipboardImageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
             <div id="selectedClipboardCount">Đã chọn: 0</div>
             <button id="clearSelectedClipboardBtn" type="button">Bỏ chọn</button>
             <button id="saveClipboardBtn" type="button" style="width:auto; min-width: 132px; margin-bottom:0; padding:7px 10px; font-size:12px;">Lưu comment</button>
           </div>
         </div>
-        <div class="clipboard-settings">
-          <label class="clipboard-toggle" title="Bật để dùng comment đã lưu trong clipboard">
-            <input id="useClipboardMode" type="checkbox">
-            <span>Dùng clipboard</span>
-          </label>
-          <input id="clipboardCount" type="number" min="1" max="200" placeholder="Số cmt">
-        </div>
+        <div id="clipboardImageStatus" class="hint clipboard-image-status"></div>
         <textarea id="clipboardInput" placeholder="Dán hoặc gõ comment hoàn chỉnh để lưu, rồi dùng lại khi cần." rows="3"></textarea>
         <div class="button-group" style="margin-bottom: 8px;">
-          <button id="useClipboardBtn" type="button">Dùng comment đã nhập</button>
+          <button id="cancelClipboardEditBtn" type="button" class="is-hidden">Hủy sửa</button>
           <button id="clearClipboardInputBtn" type="button">Xóa ô nhập</button>
         </div>
         <div id="clipboardList" class="clipboard-list"></div>

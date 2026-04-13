@@ -887,7 +887,7 @@ function extractImagePayloadFromComment(rawComment) {
   }
 
   const segments = original
-    .split(/\s-\s|\s–\s|\s—\s/)
+    .split(/\s-\s|\s–\s|\s—\s|\n+/)
     .map((part) => part.trim())
     .filter(Boolean);
   const kept = [];
@@ -895,6 +895,7 @@ function extractImagePayloadFromComment(rawComment) {
 
   const isLikelyImageUrl = (value) => {
     const url = (value || '').toLowerCase();
+    if (/^data:image\//.test(url)) return true;
     if (!/^https?:\/\//.test(url)) return false;
     if (/\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(url)) return true;
     if (url.includes('files.catbox.moe')) return true;
@@ -931,7 +932,7 @@ function extractImagePayloadFromComment(rawComment) {
   }
 
   return {
-    commentText: kept.join(' - ').trim(),
+    commentText: kept.join('\n').trim(),
     imageUrls: Array.from(new Set(urls))
   };
 }
@@ -941,13 +942,53 @@ function sanitizeFileName(name, fallback = 'image.jpg') {
   return value || fallback;
 }
 
-async function fetchImageAsFile(url, index) {
-  const response = await fetch(url, { method: 'GET', cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Cannot fetch image: ${response.status}`);
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message || 'runtime message failed'));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function fetchImageBlobViaBackground(url) {
+  const response = await sendRuntimeMessage({ action: 'fetchImageAsDataUrl', url });
+  if (!response?.ok || !response?.dataUrl) {
+    throw new Error(response?.message || 'background fetch failed');
   }
 
-  const blob = await response.blob();
+  const blobResponse = await fetch(response.dataUrl);
+  if (!blobResponse.ok) {
+    throw new Error(`data-url decode failed: ${blobResponse.status}`);
+  }
+
+  return blobResponse.blob();
+}
+
+async function fetchImageAsFile(url, index) {
+  let blob;
+
+  if (/^data:image\//i.test(url || '')) {
+    const decoded = await fetch(url);
+    if (!decoded.ok) {
+      throw new Error(`Cannot decode data image: ${decoded.status}`);
+    }
+    blob = await decoded.blob();
+  } else {
+    try {
+      blob = await fetchImageBlobViaBackground(url);
+    } catch {
+      const response = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Cannot fetch image: ${response.status}`);
+      }
+      blob = await response.blob();
+    }
+  }
+
   const parsedUrl = (() => {
     try {
       return new URL(url);
@@ -1299,7 +1340,9 @@ async function findNextAvailableCommentBox(options = {}) {
     updateStatus = false,
     targetPostUrl = '',
     lockPostFingerprint = '',
-    lockPostSessionKey = ''
+    lockPostSessionKey = '',
+    excludePostFingerprint = '',
+    excludePostSessionKey = ''
   } = options;
 
   const targetKey = extractFacebookPostKey(targetPostUrl);
@@ -1328,6 +1371,14 @@ async function findNextAvailableCommentBox(options = {}) {
       }
 
       if (lockPostSessionKey && postSessionKey !== lockPostSessionKey) {
+        continue;
+      }
+
+      if (excludePostFingerprint && fingerprint && fingerprint === excludePostFingerprint) {
+        continue;
+      }
+
+      if (excludePostSessionKey && postSessionKey && postSessionKey === excludePostSessionKey) {
         continue;
       }
 
@@ -1368,6 +1419,14 @@ async function findNextAvailableCommentBox(options = {}) {
       }
 
       if (!targetMode && ownerPost.hasAttribute('data-processed')) {
+        continue;
+      }
+
+      if (excludePostFingerprint && ownerFingerprint && ownerFingerprint === excludePostFingerprint) {
+        continue;
+      }
+
+      if (excludePostSessionKey && ownerSessionKey && ownerSessionKey === excludePostSessionKey) {
         continue;
       }
 
@@ -1480,6 +1539,8 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
     const shouldScrollAfterSubmit = request.scrollAfterSubmit !== false;
     const lockPostFingerprint = (request.lockPostFingerprint || '').trim();
     const lockPostSessionKey = (request.lockPostSessionKey || '').trim();
+    const excludePostFingerprint = (request.excludePostFingerprint || '').trim();
+    const excludePostSessionKey = (request.excludePostSessionKey || '').trim();
 
     const target = await findNextAvailableCommentBox({
       ignoreHistory: Boolean(request.ignoreHistory),
@@ -1489,7 +1550,9 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
       mutateHistoryMarks: true,
       targetPostUrl,
       lockPostFingerprint,
-      lockPostSessionKey
+      lockPostSessionKey,
+      excludePostFingerprint,
+      excludePostSessionKey
     });
 
     if (target.none) {
@@ -1519,7 +1582,9 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
 
     const imagePayload = extractImagePayloadFromComment(request.comment);
     const explicitImageUrls = Array.isArray(request.imageUrls)
-      ? request.imageUrls.filter((url) => typeof url === 'string' && /^https?:\/\//i.test(url.trim())).map((url) => url.trim())
+      ? request.imageUrls
+        .filter((url) => typeof url === 'string' && /^(https?:\/\/|data:image\/)/i.test(url.trim()))
+        .map((url) => url.trim())
       : [];
     let finalCommentText = imagePayload.commentText;
     const imageUrls = explicitImageUrls.length ? explicitImageUrls : imagePayload.imageUrls;
