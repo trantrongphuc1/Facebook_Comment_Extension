@@ -28,8 +28,8 @@
     }
 
     body {
-      width: 520px;
-      min-height: 460px;
+      width: 560px;
+      min-height: 520px;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background:
         radial-gradient(1200px 480px at -10% -10%, #ffd6ed 0%, transparent 40%),
@@ -306,8 +306,8 @@
 
     .clipboard-panel {
       margin-top: 12px;
-      padding: 10px;
-      border-radius: 10px;
+      padding: 12px;
+      border-radius: 12px;
       border: 1px dashed #f1a9d0;
       background: #fff7fc;
     }
@@ -316,31 +316,33 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
       margin-bottom: 8px;
     }
 
     .clipboard-panel .clipboard-head .head-actions {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
 
     #clearSelectedClipboardBtn {
       width: auto;
       margin-bottom: 0;
-      padding: 7px 10px;
-      font-size: 12px;
+      padding: 8px 12px;
+      font-size: 13px;
       background: linear-gradient(180deg, #b16995 0%, #8f4f78 100%);
       box-shadow: 0 8px 16px rgba(143, 79, 120, 0.22);
     }
 
     .clipboard-mini-btn {
       width: auto;
-      min-width: 96px;
+      min-width: 110px;
       margin-bottom: 0;
-      padding: 7px 10px;
-      font-size: 12px;
+      padding: 8px 12px;
+      font-size: 13px;
     }
 
     .hidden-file-input {
@@ -357,13 +359,13 @@
     }
 
     #selectedClipboardCount {
-      font-size: 11px;
+      font-size: 12px;
       color: #7c305c;
       font-weight: 700;
     }
 
     .clipboard-panel .clipboard-title {
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 700;
       color: #8d1459;
     }
@@ -400,23 +402,23 @@
     }
 
     .clipboard-panel textarea {
-      min-height: 76px;
+      min-height: 96px;
       margin-bottom: 8px;
     }
 
     .clipboard-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
       margin-top: 8px;
-      max-height: 180px;
+      max-height: 280px;
       overflow: auto;
     }
 
     .clipboard-item {
       border: 1px solid #f4c5df;
-      border-radius: 10px;
-      padding: 8px;
+      border-radius: 12px;
+      padding: 10px 11px;
       background: #fff;
     }
 
@@ -424,7 +426,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .clipboard-item-top input[type="checkbox"] {
@@ -435,29 +437,32 @@
     }
 
     .clipboard-item-top .label {
-      font-size: 11px;
+      font-size: 12px;
       color: #7c305c;
       font-weight: 700;
     }
 
     .clipboard-item-text {
-      font-size: 11px;
+      font-size: 12px;
       color: #5d2647;
-      line-height: 1.5;
+      line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
 
     .clipboard-item-actions {
       display: flex;
-      gap: 6px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .clipboard-item-actions button {
+      width: auto;
+      min-width: 64px;
       margin-bottom: 0;
-      padding: 7px 9px;
-      font-size: 11px;
+      padding: 8px 10px;
+      font-size: 12px;
     }
 
     .clipboard-empty {
@@ -551,13 +556,9 @@
 
       <div id="clipboardModePanel" class="mode-panel">
         <div class="section-title">Menu 2: Clipboard nhiều comment mỗi post</div>
-        <div class="mini-hint">Ví dụ nhập 3 post và 4 cmt thì mỗi post chạy 4 comment khác nhau, tổng 12 comment.</div>
+        <div class="mini-hint">Mở đúng post cần comment rồi chạy Menu 2. Extension sẽ chỉ chạy trên post đang mở.</div>
 
-        <input type="text" id="clipboardTargetPostUrl" placeholder="URL bài viết cần comment (tùy chọn)">
-        <div class="field-grid">
-          <input type="number" id="clipboardNumPosts" placeholder="Số post" min="1" max="200">
-          <input type="number" id="clipboardCommentsPerPost" placeholder="Số cmt / post" min="1" max="200">
-        </div>
+        <input type="number" id="clipboardCommentsPerPost" placeholder="Số cmt trên post đang mở" min="1" max="200">
 
         <button id="startClipboardBtn" type="button">Chạy Menu 2</button>
 

@@ -280,7 +280,9 @@ function createRunState({ targetPosts, commentsPerPost, commentPayloadSet, targe
     lockPostFingerprint: '',
     lockPostSessionKey: '',
     lastCompletedPostFingerprint: '',
-    lastCompletedPostSessionKey: ''
+    lastCompletedPostSessionKey: '',
+    stickToCurrentPost: false,
+    mode: 'menu1'
   };
 }
 
@@ -996,12 +998,72 @@ function createBackgroundTargetTab(targetUrl) {
   });
 }
 
-function getActiveTabId() {
+function getPreferredFacebookTab() {
   return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      resolve(tabs[0]?.id || null);
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (activeTabs) => {
+      const activeFacebookTab = (activeTabs || []).find((tab) => isFacebookAccessibleUrl(tab?.url || ''));
+      if (activeFacebookTab?.id) {
+        resolve(activeFacebookTab);
+        return;
+      }
+
+      chrome.tabs.query({ active: true }, (allActiveTabs) => {
+        const anyActiveFacebookTab = (allActiveTabs || []).find((tab) => isFacebookAccessibleUrl(tab?.url || ''));
+        if (anyActiveFacebookTab?.id) {
+          resolve(anyActiveFacebookTab);
+          return;
+        }
+
+        chrome.tabs.query({ url: ['*://*.facebook.com/*'] }, (facebookTabs) => {
+          const candidate = (facebookTabs || [])[0] || null;
+          resolve(candidate);
+        });
+      });
     });
   });
+}
+
+function getFacebookCandidateTabs() {
+  return new Promise((resolve) => {
+    const ordered = [];
+    const seen = new Set();
+
+    const pushTabs = (tabs) => {
+      for (const tab of tabs || []) {
+        if (!tab?.id) continue;
+        if (!isFacebookAccessibleUrl(tab.url || '')) continue;
+        if (seen.has(tab.id)) continue;
+        seen.add(tab.id);
+        ordered.push(tab);
+      }
+    };
+
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabsLastFocused) => {
+      pushTabs(tabsLastFocused);
+
+      chrome.tabs.query({ active: true }, (tabsActive) => {
+        pushTabs(tabsActive);
+
+        chrome.tabs.query({ url: ['*://*.facebook.com/*'] }, (tabsAllFacebook) => {
+          pushTabs(tabsAllFacebook);
+          resolve(ordered);
+        });
+      });
+    });
+  });
+}
+
+async function probeClipboardCurrentPostOnTab(tabId) {
+  try {
+    return await sendMessageToTab(tabId, { action: 'pingClipboardCurrentPost' });
+  } catch {
+    try {
+      await injectContentScript(tabId);
+      return await sendMessageToTab(tabId, { action: 'pingClipboardCurrentPost' });
+    } catch {
+      return null;
+    }
+  }
 }
 
 async function ensureContentScriptReady(tabId) {
@@ -1052,12 +1114,38 @@ async function resolveRunTabId() {
     return runState.targetTabId;
   }
 
-  const activeTabId = await getActiveTabId();
-  if (!activeTabId) {
+  if (runState?.mode === 'menu2' || runState?.stickToCurrentPost) {
+    const candidates = await getFacebookCandidateTabs();
+    if (!candidates.length) {
+      throw new Error('Không tìm thấy tab Facebook đang mở.');
+    }
+
+    let lastProbeMessage = '';
+    for (const tab of candidates) {
+      const probe = await probeClipboardCurrentPostOnTab(tab.id);
+      if (!probe) continue;
+      if (probe.status === 'ready' && probe.openedPostReady) {
+        return tab.id;
+      }
+
+      if (probe.message) {
+        lastProbeMessage = probe.message;
+      }
+    }
+
+    throw new Error(lastProbeMessage || 'Không nhận diện được post đang mở có ô bình luận khả dụng.');
+  }
+
+  const preferredTab = await getPreferredFacebookTab();
+  if (!preferredTab?.id) {
     throw new Error('Không tìm thấy tab Facebook đang mở.');
   }
 
-  return activeTabId;
+  if (!isFacebookAccessibleUrl(preferredTab.url || '')) {
+    throw new Error('Tab hiện tại không phải Facebook. Hãy mở post Facebook rồi chạy lại.');
+  }
+
+  return preferredTab.id;
 }
 
 async function initializeClipboardMenu() {
@@ -1545,7 +1633,7 @@ function initializeSmartSkipMenu() {
   });
 }
 
-function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = false) {
+function sendCurrentCommentMenu1(ignoreHistory = false, hasRetriedIgnoreHistory = false, hasRetriedConnection = false) {
   if (isSendingComment) {
     return;
   }
@@ -1583,8 +1671,10 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
         excludePostFingerprint: runState?.lastCompletedPostFingerprint || '',
         excludePostSessionKey: runState?.lastCompletedPostSessionKey || '',
         keepOnCurrentPost: runState ? shouldStayOnCurrentPost() : false,
-        markProcessed: runState ? !shouldStayOnCurrentPost() : true,
-        scrollAfterSubmit: runState ? !shouldStayOnCurrentPost() : true,
+        allowScroll: runState ? !runState.stickToCurrentPost : true,
+        maxScrollRounds: runState?.stickToCurrentPost ? 0 : 4,
+        markProcessed: runState ? (runState.stickToCurrentPost ? false : !shouldStayOnCurrentPost()) : true,
+        scrollAfterSubmit: runState ? (runState.stickToCurrentPost ? false : !shouldStayOnCurrentPost()) : true,
         ignoreHistory
       },
       (response) => {
@@ -1592,7 +1682,22 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
         if (startBtn) startBtn.disabled = false;
 
         if (chrome.runtime.lastError) {
-          document.getElementById('status').textContent = 'Không thể kết nối với trang Facebook. Hãy reload trang và thử lại.';
+          if (!hasRetriedConnection) {
+            document.getElementById('status').textContent = 'Mất kết nối content script, đang tự khởi tạo lại...';
+
+            ensureContentScriptReady(tabId)
+              .then(() => {
+                sendCurrentCommentMenu1(ignoreHistory, hasRetriedIgnoreHistory, true);
+              })
+              .catch(() => {
+                document.getElementById('status').textContent = 'Không thể kết nối với trang Facebook. Hãy mở tab Facebook hợp lệ rồi thử lại.';
+                if (nextBtn) nextBtn.disabled = comments.length <= 1;
+              });
+
+            return;
+          }
+
+          document.getElementById('status').textContent = 'Không thể kết nối với trang Facebook. Hãy mở tab Facebook hợp lệ rồi thử lại.';
           if (nextBtn) nextBtn.disabled = comments.length <= 1;
           return;
         }
@@ -1606,7 +1711,7 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
         if (response.status === 'HistoryBlocked') {
           if (!hasRetriedIgnoreHistory) {
             document.getElementById('status').textContent = 'Bỏ qua thông minh đang chặn hết bài hiện tại, thử điền lại bỏ qua lịch sử...';
-            sendCurrentComment(true, true);
+            sendCurrentCommentMenu1(true, true);
             return;
           }
 
@@ -1711,14 +1816,151 @@ function sendCurrentComment(ignoreHistory = false, hasRetriedIgnoreHistory = fal
             return;
           }
 
-          setTimeout(() => sendCurrentComment(), 700);
+          setTimeout(() => sendCurrentCommentMenu1(), 700);
         }
       }
     );
   })();
 }
 
-async function startRunWithConfig({ targetPosts, commentsPerPost, commentSet, targetPostUrl }) {
+function sendCurrentCommentMenu2(hasRetriedConnection = false) {
+  if (isSendingComment) {
+    return;
+  }
+
+  isSendingComment = true;
+  const startBtn = document.getElementById('startBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  if (startBtn) startBtn.disabled = true;
+  if (nextBtn) nextBtn.disabled = true;
+
+  (async () => {
+    let tabId = null;
+
+    try {
+      tabId = await resolveRunTabId();
+    } catch (error) {
+      document.getElementById('status').textContent = `Không xác định được tab chạy Menu 2: ${error.message}`;
+      isSendingComment = false;
+      if (startBtn) startBtn.disabled = false;
+      return;
+    }
+
+    chrome.tabs.sendMessage(
+      tabId,
+      {
+        action: 'fillClipboardCurrentPost',
+        comment: runState ? getCurrentRunComment() : comments[currentIndex],
+        imageUrls: runState
+          ? (getCurrentRunPayload()?.imageUrls || [])
+          : commentImageUrls,
+        keepOnCurrentPost: runState ? shouldStayOnCurrentPost() : false,
+        allowScroll: false,
+        maxScrollRounds: 0,
+        markProcessed: false,
+        scrollAfterSubmit: false,
+        ignoreHistory: false
+      },
+      (response) => {
+        if (menu2TimeoutId) {
+          clearTimeout(menu2TimeoutId);
+          menu2TimeoutId = null;
+        }
+        isSendingComment = false;
+        if (startBtn) startBtn.disabled = false;
+
+        if (chrome.runtime.lastError) {
+          if (!hasRetriedConnection) {
+            document.getElementById('status').textContent = 'Menu 2 mất kết nối content script, đang tự khởi tạo lại...';
+
+            ensureContentScriptReady(tabId)
+              .then(() => {
+                sendCurrentCommentMenu2(true);
+              })
+              .catch(() => {
+                document.getElementById('status').textContent = 'Menu 2 không thể kết nối tab Facebook đang mở post. Hãy bấm vào tab post Facebook rồi chạy lại.';
+              });
+
+            return;
+          }
+
+          document.getElementById('status').textContent = 'Menu 2 không thể kết nối tab Facebook đang mở post. Hãy bấm vào tab post Facebook rồi chạy lại.';
+          return;
+        }
+
+        if (!response) {
+          document.getElementById('status').textContent = 'Menu 2 không nhận được phản hồi từ tab Facebook.';
+          return;
+        }
+
+        if (response.status === 'No more posts') {
+          finishRun('Menu 2 không tìm thấy post đang mở có ô bình luận hợp lệ.');
+          return;
+        }
+
+        if (response.status === 'SubmitFailed') {
+          finishRun('Menu 2 đã điền nhưng chưa bấm gửi thành công.');
+          return;
+        }
+
+        if (response.status === 'InternalError') {
+          finishRun(`Menu 2 lỗi xử lý: ${response.message || 'Không rõ nguyên nhân'}`);
+          return;
+        }
+
+        if (response.status !== 'Filled') {
+          finishRun('Menu 2 nhận phản hồi không hợp lệ từ content script.');
+          return;
+        }
+
+        const attached = Number(response.attachedImages || 0);
+        const skipped = Number(response.skippedImages || 0);
+        const reason = response.attachmentReason ? `, lý do: ${response.attachmentReason}` : '';
+        if (attached > 0 || skipped > 0) {
+          document.getElementById('status').textContent = `Menu 2 điền comment ${currentIndex + 1}/${comments.length} (ảnh đính kèm: ${attached}, lỗi: ${skipped}${reason})`;
+        } else {
+          document.getElementById('status').textContent = `Menu 2 điền comment ${currentIndex + 1}/${comments.length}`;
+        }
+
+        if (runState?.active) {
+          if (shouldStayOnCurrentPost()) {
+            runState.commentIndexInPost += 1;
+            updateRunProgressStatus();
+          } else {
+            runState.postIndex += 1;
+            runState.commentIndexInPost = 0;
+          }
+
+          if (runState.postIndex >= runState.targetPosts) {
+            finishRun(`Menu 2 đã hoàn tất ${runState.commentsPerPost} comment trên post đang mở.`);
+            return;
+          }
+
+          setTimeout(() => sendCurrentCommentMenu2(), 700);
+        }
+      }
+    );
+
+    let menu2TimeoutId = setTimeout(() => {
+      menu2TimeoutId = null;
+      if (!isSendingComment) return;
+      isSendingComment = false;
+      if (startBtn) startBtn.disabled = false;
+      finishRun('Menu 2 timeout: quá lâu không nhận phản hồi từ tab Facebook đang mở.');
+    }, 15000);
+  })();
+}
+
+function sendCurrentCommentByMode(ignoreHistory = false, hasRetriedIgnoreHistory = false) {
+  if (runState?.mode === 'menu2') {
+    sendCurrentCommentMenu2();
+    return;
+  }
+
+  sendCurrentCommentMenu1(ignoreHistory, hasRetriedIgnoreHistory);
+}
+
+async function startRunWithConfig({ targetPosts, commentsPerPost, commentSet, targetPostUrl, stickToCurrentPost = false, mode = 'menu1' }) {
   const payloadSet = Array.isArray(commentSet)
     ? commentSet.map((entry) => {
       if (typeof entry === 'string') {
@@ -1745,6 +1987,8 @@ async function startRunWithConfig({ targetPosts, commentsPerPost, commentSet, ta
     commentPayloadSet: payloadSet,
     targetPostUrl
   });
+  runState.stickToCurrentPost = Boolean(stickToCurrentPost);
+  runState.mode = mode === 'menu2' ? 'menu2' : 'menu1';
 
   const nextBtn = document.getElementById('nextBtn');
   if (nextBtn) nextBtn.disabled = true;
@@ -1762,9 +2006,12 @@ async function startRunWithConfig({ targetPosts, commentsPerPost, commentSet, ta
       await waitForTabUpdated(runState.targetTabId, targetUrl);
       await waitForFacebookTabAccessible(runState.targetTabId);
       await ensureContentScriptReady(runState.targetTabId);
+    } else {
+      const activeTabId = await resolveRunTabId();
+      await ensureContentScriptReady(activeTabId);
     }
 
-    sendCurrentComment();
+    sendCurrentCommentByMode();
   } catch (error) {
     finishRun(`Dừng batch: ${error.message}`);
   }
@@ -1810,7 +2057,8 @@ async function startFormMenu() {
     targetPosts: numPosts,
     commentsPerPost: 1,
     commentSet: [{ text: singleComment, imageUrls: commentImageUrls.slice() }],
-    targetPostUrl
+    targetPostUrl,
+    mode: 'menu1'
   });
 }
 
@@ -1820,14 +2068,7 @@ async function startClipboardMenu() {
     return;
   }
 
-  const targetPostUrl = (document.getElementById('clipboardTargetPostUrl')?.value || '').trim();
-  const numPosts = Number.parseInt(document.getElementById('clipboardNumPosts')?.value, 10);
   const commentsPerPost = getClipboardCount();
-
-  if (!Number.isFinite(numPosts) || numPosts <= 0) {
-    document.getElementById('status').textContent = 'Menu 2 cần nhập Số post.';
-    return;
-  }
 
   if (!Number.isFinite(commentsPerPost) || commentsPerPost <= 0) {
     document.getElementById('status').textContent = 'Menu 2 cần nhập Số cmt / post.';
@@ -1845,10 +2086,12 @@ async function startClipboardMenu() {
 
   commentImageUrls = [];
   await startRunWithConfig({
-    targetPosts: numPosts,
+    targetPosts: 1,
     commentsPerPost,
     commentSet: selectedComments.slice(0, commentsPerPost),
-    targetPostUrl
+    targetPostUrl: '',
+    stickToCurrentPost: true,
+    mode: 'menu2'
   });
 }
 
@@ -1879,7 +2122,7 @@ document.getElementById('nextBtn').addEventListener('click', () => {
     return;
   }
 
-  sendCurrentComment();
+  sendCurrentCommentMenu1();
 });
 
 const STORAGE_KEY_FORM_DATA = 'formData';
@@ -1894,8 +2137,6 @@ function saveFormData() {
     contactPhone: document.getElementById('contactPhone').value,
     numPosts: document.getElementById('numPosts').value,
     targetPostUrl: document.getElementById('targetPostUrl').value,
-    clipboardTargetPostUrl: document.getElementById('clipboardTargetPostUrl')?.value || '',
-    clipboardNumPosts: document.getElementById('clipboardNumPosts')?.value || '',
     clipboardCommentsPerPost: document.getElementById('clipboardCommentsPerPost')?.value || ''
   };
 
@@ -1908,7 +2149,7 @@ function loadFormData() {
     if (!formData) return;
 
     // Restore each field
-    const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardTargetPostUrl', 'clipboardNumPosts', 'clipboardCommentsPerPost'];
+    const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost'];
     for (const field of fields) {
       const el = document.getElementById(field);
       if (el && formData[field]) {
@@ -1919,7 +2160,7 @@ function loadFormData() {
 }
 
 function initializeFormAutoSave() {
-  const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardTargetPostUrl', 'clipboardNumPosts', 'clipboardCommentsPerPost'];
+  const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost'];
 
   for (const field of fields) {
     const el = document.getElementById(field);

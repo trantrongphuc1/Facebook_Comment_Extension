@@ -52,7 +52,7 @@ function isLikelyPostFrame(node) {
     return true;
   }
 
-  const hasInteractiveCommentNode = Boolean(node.querySelector('[role="button"][aria-label*="bình luận" i], [role="button"][aria-label*="comment" i], [placeholder*="bình luận" i], [placeholder*="comment" i], div[contenteditable="true"]'));
+  const hasInteractiveCommentNode = Boolean(node.querySelector('[role="button"][aria-label*="bình luận" i], [role="button"][aria-label*="binh luan" i], [role="button"][aria-label*="comment" i], [aria-label*="bình luận dưới tên" i], [aria-label*="binh luan duoi ten" i], [aria-label*="comment as" i], [placeholder*="bình luận" i], [placeholder*="binh luan" i], [placeholder*="comment" i], [aria-placeholder*="bình luận" i], [aria-placeholder*="binh luan" i], [aria-placeholder*="comment" i], [data-placeholder*="bình luận" i], [data-placeholder*="binh luan" i], [data-placeholder*="comment" i]'));
   return hasInteractiveCommentNode;
 }
 
@@ -77,11 +77,16 @@ function getPostCandidateFromNode(node) {
 
 function collectPostCandidatesFromCommentUI() {
   const nodes = Array.from(document.querySelectorAll([
-    'div[contenteditable="true"]',
     'span[role="textbox"]',
     '[placeholder*="bình luận" i]',
     '[placeholder*="binh luan" i]',
     '[placeholder*="comment" i]',
+    '[aria-placeholder*="bình luận" i]',
+    '[aria-placeholder*="binh luan" i]',
+    '[aria-placeholder*="comment" i]',
+    '[data-placeholder*="bình luận" i]',
+    '[data-placeholder*="binh luan" i]',
+    '[data-placeholder*="comment" i]',
     '[aria-label*="bình luận dưới tên" i]',
     '[aria-label*="binh luan duoi ten" i]',
     '[aria-label*="comment as" i]',
@@ -293,19 +298,18 @@ function matchesTargetPostUrl(post, targetPostUrl) {
   const targetKey = extractFacebookPostKey(targetPostUrl);
   if (!targetKey) return false;
 
-  const pageUrl = normalizeFacebookUrlToken(window.location.href);
   const permalink = normalizeFacebookUrlToken(post.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="fbid="]')?.getAttribute('href') || '');
   const firstLink = normalizeFacebookUrlToken(post.querySelector('a[href]')?.getAttribute('href') || '');
   const pagelet = normalizeFacebookUrlToken(post.getAttribute('data-pagelet') || '');
   const postId = normalizeFacebookUrlToken(post.getAttribute('id') || '');
-  const candidates = [extractFacebookPostKey(permalink), extractFacebookPostKey(firstLink), extractFacebookPostKey(pageUrl), extractFacebookPostKey(pagelet), extractFacebookPostKey(postId)].filter(Boolean);
+  const candidates = [extractFacebookPostKey(permalink), extractFacebookPostKey(firstLink), extractFacebookPostKey(pagelet), extractFacebookPostKey(postId)].filter(Boolean);
 
   if (candidates.includes(targetKey)) {
     return true;
   }
 
   const normalizedTarget = normalizeFacebookUrlToken(targetPostUrl);
-  return [permalink, firstLink, pageUrl].some((candidate) => candidate && (candidate === normalizedTarget || normalizedTarget.includes(candidate) || candidate.includes(normalizedTarget)));
+  return [permalink, firstLink].some((candidate) => candidate && (candidate === normalizedTarget || normalizedTarget.includes(candidate) || candidate.includes(normalizedTarget)));
 }
 
 // #endregion
@@ -313,7 +317,16 @@ function matchesTargetPostUrl(post, targetPostUrl) {
 // #region Composer Detection & Mapping
 
 function findComposerInPost(post) {
-  return post.querySelector('div[contenteditable="true"]');
+  if (!post) return null;
+
+  const candidates = Array.from(post.querySelectorAll('div[contenteditable="true"], div[role="textbox"], span[role="textbox"]'));
+  for (const candidate of candidates) {
+    if (!isVisible(candidate)) continue;
+    if (!isLikelyCommentComposer(candidate)) continue;
+    return candidate;
+  }
+
+  return null;
 }
 
 function getVisibleComposers() {
@@ -381,7 +394,12 @@ function getVisibleCommentSurfaces() {
 function getComposerHintText(composer) {
   if (!composer) return '';
   const text = (composer.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 160);
-  return `${composer.getAttribute('aria-label') || ''} ${composer.getAttribute('aria-placeholder') || ''} ${composer.getAttribute('data-placeholder') || ''} ${composer.getAttribute('placeholder') || ''} ${text}`.toLowerCase().trim();
+  const containerText = (composer.closest('[role="dialog"], form, [role="article"]')?.textContent || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 260);
+  return `${composer.getAttribute('aria-label') || ''} ${composer.getAttribute('aria-placeholder') || ''} ${composer.getAttribute('data-placeholder') || ''} ${composer.getAttribute('placeholder') || ''} ${text} ${containerText}`.toLowerCase().trim();
 }
 
 function hasCommentPromptHint(text) {
@@ -397,8 +415,51 @@ function hasUnderNameHint(composer) {
   return hasCommentPromptHint(hint);
 }
 
+function isLikelyShareComposer(node) {
+  if (!node) return false;
+  const hint = getComposerHintText(node);
+  if (!hint) return false;
+
+  const shareTokens = [
+    'hãy nói gì về nội dung này',
+    'hay noi gi ve noi dung nay',
+    "what's on your mind",
+    'what is on your mind',
+    'chia sẻ lên',
+    'chia se len',
+    'share to',
+    'share this',
+    'gửi bằng messenger',
+    'gui bang messenger',
+    'tạo quảng cáo',
+    'tao quang cao'
+  ];
+
+  return shareTokens.some((token) => hint.includes(token));
+}
+
+function isShareContextActive(composer) {
+  if (!composer) return false;
+  if (isLikelyShareComposer(composer)) return true;
+
+  const scope = composer.closest('[role="dialog"], form, [role="article"]') || document;
+  const scopeText = (scope.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!scopeText) return false;
+
+  return scopeText.includes('chia sẻ ngay')
+    || scopeText.includes('chia se ngay')
+    || scopeText.includes('hãy nói gì về nội dung này')
+    || scopeText.includes('hay noi gi ve noi dung nay')
+    || scopeText.includes('gửi bằng messenger')
+    || scopeText.includes('gui bang messenger');
+}
+
 function isLikelyCommentSurface(node) {
   if (!node) return false;
+
+  if (isLikelyShareComposer(node)) {
+    return false;
+  }
 
   if (isLikelyCommentComposer(node)) {
     return true;
@@ -409,8 +470,7 @@ function isLikelyCommentSurface(node) {
     return true;
   }
 
-  const role = (node.getAttribute('role') || '').toLowerCase();
-  return role === 'textbox' || role === 'combobox';
+  return false;
 }
 
 function findInlinePromptSurfaceInPost(post) {
@@ -446,12 +506,16 @@ function findInlinePromptSurfaceInPost(post) {
 function isLikelyCommentComposer(composer) {
   if (!composer) return false;
 
+  if (isLikelyShareComposer(composer)) {
+    return false;
+  }
+
   const text = getComposerHintText(composer);
   if (text.includes('bình luận') || text.includes('binh luan') || text.includes('comment') || text.includes('trả lời') || text.includes('reply')) {
     return true;
   }
 
-  return composer.getAttribute('data-lexical-editor') === 'true';
+  return false;
 }
 
 function pickBestCommentComposer(composers, anchorElement, post) {
@@ -695,6 +759,7 @@ async function openComposerFromVisibleSurface(post) {
 
 function findSubmitButtonNearComposer(composer) {
   if (!composer) return null;
+  if (!isLikelyCommentComposer(composer)) return null;
 
   // Only search very near composer to avoid clicking avatar/sticker tools.
   const searchContainers = [
@@ -720,6 +785,13 @@ function findSubmitButtonNearComposer(composer) {
     if (!container) continue;
     const directSubmit = container.querySelector('button[type="submit"], input[type="submit"]');
     if (directSubmit && isVisible(directSubmit)) {
+      const text = `${directSubmit.textContent || ''} ${directSubmit.getAttribute('aria-label') || ''} ${directSubmit.getAttribute('title') || ''}`.toLowerCase();
+      if (bannedTokens.some((token) => text.includes(token))) {
+        continue;
+      }
+      if (!/bình luận|binh luan|comment|trả lời|tra loi|reply/.test(text)) {
+        continue;
+      }
       return directSubmit;
     }
   }
@@ -763,13 +835,14 @@ function findSubmitButtonNearComposer(composer) {
         // Facebook send icon often has no text/aria; keep only candidates tightly aligned with composer row.
         const nearComposerRow = bcy >= (composerRect.top - 36) && bcy <= (composerRect.bottom + 36);
         const onRightSide = bcx >= (composerRect.right - 120);
-        if (!(nearComposerRow && onRightSide)) {
+        const sameForm = !composer.closest('form') || btn.closest('form') === composer.closest('form');
+        if (!(nearComposerRow && onRightSide && sameForm)) {
           continue;
         }
         score += 1;
       }
 
-      if (score > bestScore && score >= 0.5) {
+      if (score > bestScore && score >= 1.5) {
         bestScore = score;
         best = btn;
       }
@@ -846,6 +919,7 @@ async function didDraftLikelySubmit(composer, expectedText, context = {}) {
 
 async function submitCommentFromComposer(composer, expectedText = '', post = null) {
   if (!composer) return false;
+  if (!isLikelyCommentComposer(composer)) return false;
 
   const normalizedExpected = normalizeDraftText(expectedText || '');
   const beforeOccurrenceCount = post ? countTextOccurrences(post, normalizedExpected) : 0;
@@ -1008,44 +1082,77 @@ async function fetchImageAsFile(url, index) {
 function findImageInputNearComposer(composer) {
   if (!composer) return null;
 
+  const activeDialog = composer.closest('[role="dialog"]');
+  const composerForm = composer.closest('form');
   const containers = [
-    composer.closest('form'),
-    composer.closest('[role="dialog"]'),
+    composerForm,
+    activeDialog,
     composer.closest('[role="article"]'),
     composer.parentElement,
     composer.parentElement?.parentElement,
     document
   ].filter(Boolean);
 
-  for (const container of containers) {
+  const seen = new Set();
+  let best = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+    const container = containers[containerIndex];
     const inputs = Array.from(container.querySelectorAll('input[type="file"]'));
     for (const input of inputs) {
+      if (seen.has(input)) continue;
+      seen.add(input);
+
+      if (input.disabled) continue;
+
       const accept = (input.getAttribute('accept') || '').toLowerCase();
       if (accept && !accept.includes('image')) continue;
-      if (input.disabled) continue;
-      return input;
+
+      if (activeDialog && !activeDialog.contains(input) && container === document) {
+        continue;
+      }
+
+      let score = 80 - (containerIndex * 12);
+      if (accept.includes('image')) score += 20;
+      if (input.multiple) score += 6;
+      if (composerForm && input.closest('form') === composerForm) score += 8;
+      if (activeDialog && input.closest('[role="dialog"]') === activeDialog) score += 12;
+      if (isVisible(input)) score += 3;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = input;
+      }
     }
   }
 
-  return null;
+  return best;
 }
 
 function findPhotoAttachButtonNearComposer(composer) {
   if (!composer) return null;
 
+  const composerForm = composer.closest('form');
+  const composerDialog = composer.closest('[role="dialog"]');
   const containers = [
-    composer.closest('form'),
-    composer.closest('[role="dialog"]'),
+    composerForm,
+    composerDialog,
     composer.closest('[role="article"]'),
     composer.parentElement,
-    composer.parentElement?.parentElement,
-    document
+    composer.parentElement?.parentElement
   ].filter(Boolean);
 
   const tokens = ['ảnh', 'hinh', 'photo', 'camera', 'image'];
-  const banned = ['video call', 'gọi video', 'reel'];
+  const banned = ['video call', 'gọi video', 'reel', 'share', 'chia sẻ', 'chia se', 'quảng cáo', 'quang cao', 'messenger'];
+  const composerRect = composer.getBoundingClientRect();
+  const cx = composerRect.left + (composerRect.width / 2);
+  const cy = composerRect.top + (composerRect.height / 2);
+  let best = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
 
-  for (const container of containers) {
+  for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+    const container = containers[containerIndex];
     const buttons = Array.from(container.querySelectorAll('button, div[role="button"], span[role="button"]'));
     for (const btn of buttons) {
       if (!isVisible(btn)) continue;
@@ -1057,13 +1164,28 @@ function findPhotoAttachButtonNearComposer(composer) {
 
       if (!text) continue;
       if (banned.some((token) => text.includes(token))) continue;
-      if (tokens.some((token) => text.includes(token))) {
-        return btn;
+      if (!tokens.some((token) => text.includes(token))) continue;
+
+      const rect = btn.getBoundingClientRect();
+      const bx = rect.left + (rect.width / 2);
+      const by = rect.top + (rect.height / 2);
+      const dist = Math.hypot(bx - cx, by - cy);
+      const nearComposer = by >= (composerRect.top - 220) && by <= (composerRect.bottom + 220);
+      if (!nearComposer || dist > 420) continue;
+
+      let score = 60 - (containerIndex * 10);
+      score -= Math.min(dist / 45, 14);
+      if (composerForm && btn.closest('form') === composerForm) score += 12;
+      if (composerDialog && btn.closest('[role="dialog"]') === composerDialog) score += 16;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = btn;
       }
     }
   }
 
-  return null;
+  return best;
 }
 
 async function ensureImageInputReady(composer) {
@@ -1081,6 +1203,46 @@ async function ensureImageInputReady(composer) {
   }
 
   return null;
+}
+
+async function waitForImageAttachmentToSettle(composer, timeoutMs = 7000) {
+  if (!composer) return false;
+
+  const scope = composer.closest('form') || composer.closest('[role="dialog"]') || composer.parentElement || document;
+  const previewSelectors = [
+    'img[src^="blob:"]',
+    'img[src^="data:image/"]',
+    'img[alt*="photo" i]',
+    'img[alt*="ảnh" i]',
+    '[aria-label*="remove photo" i]',
+    '[aria-label*="xóa ảnh" i]'
+  ];
+  const uploadingSelectors = [
+    '[role="progressbar"]',
+    '[aria-label*="uploading" i]',
+    '[aria-label*="đang tải" i]',
+    '[aria-label*="dang tai" i]'
+  ];
+
+  const deadline = Date.now() + timeoutMs;
+  let sawPreview = false;
+
+  while (Date.now() < deadline) {
+    const previewCount = previewSelectors.reduce((count, selector) => count + scope.querySelectorAll(selector).length, 0);
+    const hasUploading = uploadingSelectors.some((selector) => Boolean(scope.querySelector(selector)));
+
+    if (previewCount > 0) {
+      sawPreview = true;
+    }
+
+    if (sawPreview && !hasUploading) {
+      return true;
+    }
+
+    await sleep(240);
+  }
+
+  return sawPreview;
 }
 
 async function attachImagesToComposer(composer, imageUrls) {
@@ -1112,16 +1274,22 @@ async function attachImagesToComposer(composer, imageUrls) {
     dt.items.add(file);
   }
 
-  input.files = dt.files;
+  const filesSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
+  if (filesSetter) {
+    filesSetter.call(input, dt.files);
+  } else {
+    input.files = dt.files;
+  }
+
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
 
-  // Give Facebook some time to build attachment preview before submit.
-  await sleep(900);
+  // Give Facebook enough time to materialize preview and finish upload state.
+  const settled = await waitForImageAttachmentToSettle(composer);
   return {
     attached: files.length,
     skipped: Math.max(imageUrls.length - files.length, 0),
-    reason: files.length ? 'attached' : 'unknown'
+    reason: files.length ? (settled ? 'attached' : 'attached-pending-preview') : 'unknown'
   };
 }
 
@@ -1480,6 +1648,231 @@ async function findNextAvailableCommentBox(options = {}) {
   return { none: true, processedSet, totalCandidates, blockedByHistory, noComposerCount, scrollRounds: maxScrollRounds };
 }
 
+function getVisibleDialogs() {
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+  return dialogs
+    .filter((node) => {
+      if (!isVisible(node)) return false;
+      const style = window.getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    })
+    .sort((a, b) => {
+      const za = Number.parseInt(window.getComputedStyle(a).zIndex || '0', 10) || 0;
+      const zb = Number.parseInt(window.getComputedStyle(b).zIndex || '0', 10) || 0;
+      if (za !== zb) return zb - za;
+
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      const areaA = ra.width * ra.height;
+      const areaB = rb.width * rb.height;
+      return areaB - areaA;
+    });
+}
+
+function getVisibleMenu2PromptSurfaces(scope = document) {
+  const nodes = Array.from(scope.querySelectorAll([
+    '[aria-label*="bình luận dưới tên" i]',
+    '[aria-label*="binh luan duoi ten" i]',
+    '[aria-label*="comment as" i]',
+    '[placeholder*="bình luận" i]',
+    '[placeholder*="binh luan" i]',
+    '[placeholder*="comment" i]',
+    '[aria-placeholder*="bình luận" i]',
+    '[aria-placeholder*="binh luan" i]',
+    '[aria-placeholder*="comment" i]',
+    '[data-placeholder*="bình luận" i]',
+    '[data-placeholder*="binh luan" i]',
+    '[data-placeholder*="comment" i]'
+  ].join(', ')));
+
+  return nodes
+    .filter(isVisible)
+    .filter((node) => !isShareContextActive(node));
+}
+
+async function findCurrentOpenedPostCommentBox(options = {}) {
+  const { probeOnly = false } = options;
+  const dialogs = getVisibleDialogs();
+  const allPosts = getPostContainers();
+
+  const buildTargetFromComposer = (composer, candidatePosts = allPosts) => {
+    if (!composer || isShareContextActive(composer)) return null;
+
+    const ownerPost = getPostCandidateFromNode(composer) || findBestMatchedPostForNode(composer, candidatePosts.length ? candidatePosts : allPosts);
+    if (!ownerPost) return null;
+
+    const fingerprint = getPostFingerprint(ownerPost);
+    const sessionKey = getSessionPostKey(ownerPost);
+
+    return {
+      box: composer,
+      scannedPost: ownerPost,
+      post: ownerPost,
+      fingerprint,
+      scannedFingerprint: fingerprint,
+      ownerSessionKey: sessionKey,
+      scannedSessionKey: sessionKey,
+      processedSet: new Set(),
+      totalCandidates: 1,
+      blockedByHistory: 0,
+      scrollRounds: 0,
+      targetMode: true
+    };
+  };
+
+  for (const dialog of dialogs) {
+    const dialogText = (dialog.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!dialogText) continue;
+
+    // Skip share dialogs; Menu 2 must only work on opened post/comment context.
+    if (dialogText.includes('chia sẻ ngay') || dialogText.includes('chia se ngay') || dialogText.includes('hãy nói gì về nội dung này') || dialogText.includes('hay noi gi ve noi dung nay')) {
+      continue;
+    }
+
+    const dialogPosts = allPosts.filter((post) => dialog.contains(post));
+    const dialogComposers = Array.from(dialog.querySelectorAll('div[contenteditable="true"], div[role="textbox"], span[role="textbox"]'))
+      .filter(isVisible)
+      .filter(isLikelyCommentComposer)
+      .filter((node) => !isShareContextActive(node));
+
+    if (dialogComposers.length) {
+      const picked = dialogComposers.find((node) => hasUnderNameHint(node))
+        || pickBestCommentComposer(dialogComposers, dialog, null)
+        || dialogComposers[0];
+
+      const targetFromComposer = buildTargetFromComposer(picked, dialogPosts);
+      if (targetFromComposer) {
+        return targetFromComposer;
+      }
+    }
+
+    // If only prompt surface is visible, treat as ready in probe mode.
+    const promptSurface = getVisibleMenu2PromptSurfaces(dialog)[0];
+
+    if (probeOnly && promptSurface) {
+      return {
+        box: promptSurface,
+        scannedPost: null,
+        post: null,
+        fingerprint: '',
+        scannedFingerprint: '',
+        ownerSessionKey: '',
+        scannedSessionKey: '',
+        processedSet: new Set(),
+        totalCandidates: dialogPosts.length || 1,
+        blockedByHistory: 0,
+        scrollRounds: 0,
+        targetMode: true,
+        promptOnly: true
+      };
+    }
+
+    if (!probeOnly && promptSurface) {
+      promptSurface.click();
+      for (const waitMs of [120, 220, 320]) {
+        await sleep(waitMs);
+        const refreshed = Array.from(dialog.querySelectorAll('div[contenteditable="true"], div[role="textbox"], span[role="textbox"]'))
+          .filter(isVisible)
+          .filter(isLikelyCommentComposer)
+          .filter((node) => !isShareContextActive(node));
+        if (refreshed.length) {
+          const targetFromComposer = buildTargetFromComposer(refreshed[0], dialogPosts);
+          if (targetFromComposer) {
+            return targetFromComposer;
+          }
+        }
+      }
+    }
+
+    // Last resort in dialog: try only the first likely post, not full scan.
+    if (!probeOnly && dialogPosts.length) {
+      const firstPost = dialogPosts[0];
+      const box = await ensureComposerReady(firstPost, true);
+      if (box && !isShareContextActive(box)) {
+        const targetFromComposer = buildTargetFromComposer(box, dialogPosts);
+        if (targetFromComposer) {
+          return targetFromComposer;
+        }
+      }
+    }
+  }
+
+  if (probeOnly) {
+    const globalPrompt = getVisibleMenu2PromptSurfaces(document)[0];
+    if (globalPrompt) {
+      return {
+        box: globalPrompt,
+        scannedPost: null,
+        post: null,
+        fingerprint: '',
+        scannedFingerprint: '',
+        ownerSessionKey: '',
+        scannedSessionKey: '',
+        processedSet: new Set(),
+        totalCandidates: 1,
+        blockedByHistory: 0,
+        scrollRounds: 0,
+        targetMode: true,
+        promptOnly: true
+      };
+    }
+  }
+
+  if (!probeOnly) {
+    const globalPrompt = getVisibleMenu2PromptSurfaces(document)[0];
+    if (globalPrompt) {
+      globalPrompt.click();
+      for (const waitMs of [120, 220, 320]) {
+        await sleep(waitMs);
+        const refreshed = getVisibleComposers()
+          .filter(isLikelyCommentComposer)
+          .filter((node) => !isShareContextActive(node));
+        if (refreshed.length) {
+          const picked = refreshed.find((node) => hasUnderNameHint(node)) || refreshed[0];
+          const ownerPost = getPostCandidateFromNode(picked) || findBestMatchedPostForNode(picked, allPosts);
+          if (ownerPost) {
+            const fingerprint = getPostFingerprint(ownerPost);
+            const sessionKey = getSessionPostKey(ownerPost);
+            return {
+              box: picked,
+              scannedPost: ownerPost,
+              post: ownerPost,
+              fingerprint,
+              scannedFingerprint: fingerprint,
+              ownerSessionKey: sessionKey,
+              scannedSessionKey: sessionKey,
+              processedSet: new Set(),
+              totalCandidates: 1,
+              blockedByHistory: 0,
+              scrollRounds: 0,
+              targetMode: true
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback: use active composer if user already focused comment box in opened post.
+  const active = document.activeElement;
+  if (active && isLikelyCommentComposer(active) && !isShareContextActive(active)) {
+    const targetFromComposer = buildTargetFromComposer(active, allPosts);
+    if (targetFromComposer) {
+      return targetFromComposer;
+    }
+  }
+
+  return {
+    none: true,
+    processedSet: new Set(),
+    totalCandidates: 0,
+    blockedByHistory: 0,
+    noComposerCount: 0,
+    scrollRounds: 0,
+    noComposerInViewport: true
+  };
+}
+
 // #endregion
 
 // #region Message Handler
@@ -1509,6 +1902,32 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'pingClipboardCurrentPost') {
+    (async () => {
+      const target = await findCurrentOpenedPostCommentBox({ probeOnly: true });
+      if (target?.none) {
+        sendResponse({
+          status: 'not_ready',
+          openedPostReady: false,
+          message: 'Không nhận diện được post đang mở có ô bình luận khả dụng.',
+          totalCandidates: target.totalCandidates || 0,
+          noComposerInViewport: Boolean(target.noComposerInViewport)
+        });
+        return;
+      }
+
+      sendResponse({
+        status: 'ready',
+        openedPostReady: true,
+        promptOnly: Boolean(target.promptOnly),
+        postFingerprint: target.fingerprint || '',
+        postSessionKey: target.ownerSessionKey || target.scannedSessionKey || '',
+        totalCandidates: target.totalCandidates || 1
+      });
+    })();
+    return true;
+  }
+
   if (request.action === 'resetProcessedHistory') {
     (async () => {
       await setStorageValue(STORAGE_KEY, []);
@@ -1521,7 +1940,8 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
     return true;
   }
 
-  if (request.action !== 'fillNext') {
+  const isClipboardCurrentPostAction = request.action === 'fillClipboardCurrentPost';
+  if (request.action !== 'fillNext' && !isClipboardCurrentPostAction) {
     return;
   }
 
@@ -1532,28 +1952,30 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
       return;
     }
 
-    const targetPostUrl = (request.targetPostUrl || '').trim();
-    const targetMode = Boolean(targetPostUrl);
+    const targetPostUrl = isClipboardCurrentPostAction ? '' : (request.targetPostUrl || '').trim();
+    const targetMode = isClipboardCurrentPostAction ? true : Boolean(targetPostUrl);
     const keepOnCurrentPost = Boolean(request.keepOnCurrentPost);
-    const shouldMarkProcessed = request.markProcessed !== false;
-    const shouldScrollAfterSubmit = request.scrollAfterSubmit !== false;
+    const shouldMarkProcessed = isClipboardCurrentPostAction ? false : (request.markProcessed !== false);
+    const shouldScrollAfterSubmit = isClipboardCurrentPostAction ? false : (request.scrollAfterSubmit !== false);
     const lockPostFingerprint = (request.lockPostFingerprint || '').trim();
     const lockPostSessionKey = (request.lockPostSessionKey || '').trim();
     const excludePostFingerprint = (request.excludePostFingerprint || '').trim();
     const excludePostSessionKey = (request.excludePostSessionKey || '').trim();
 
-    const target = await findNextAvailableCommentBox({
-      ignoreHistory: Boolean(request.ignoreHistory),
-      autoOpenComposer: true,
-      allowScroll: true,
-      maxScrollRounds: 4,
-      mutateHistoryMarks: true,
-      targetPostUrl,
-      lockPostFingerprint,
-      lockPostSessionKey,
-      excludePostFingerprint,
-      excludePostSessionKey
-    });
+    const target = isClipboardCurrentPostAction
+      ? await findCurrentOpenedPostCommentBox()
+      : await findNextAvailableCommentBox({
+        ignoreHistory: Boolean(request.ignoreHistory),
+        autoOpenComposer: true,
+        allowScroll: request.allowScroll !== false,
+        maxScrollRounds: Number.isFinite(Number(request.maxScrollRounds)) ? Math.max(0, Number(request.maxScrollRounds)) : 4,
+        mutateHistoryMarks: true,
+        targetPostUrl,
+        lockPostFingerprint,
+        lockPostSessionKey,
+        excludePostFingerprint,
+        excludePostSessionKey
+      });
 
     if (target.none) {
       if (target.totalCandidates > 0 && target.blockedByHistory >= target.totalCandidates) {
@@ -1570,6 +1992,17 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
         totalCandidates: target.totalCandidates,
         blockedByHistory: target.blockedByHistory,
         scrollRounds: target.scrollRounds
+      });
+      return;
+    }
+
+    if (isShareContextActive(target.box)) {
+      sendResponse({
+        status: 'No more posts',
+        totalCandidates: target.totalCandidates || 0,
+        blockedByHistory: target.blockedByHistory || 0,
+        scrollRounds: target.scrollRounds || 0,
+        noComposerInViewport: true
       });
       return;
     }
