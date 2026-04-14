@@ -2247,9 +2247,10 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
       }));
     }
 
-    // Menu 2 should submit immediately by Enter to avoid leave-site navigation prompts.
+    // Menu 2 should submit as soon as the draft is populated.
+    // Keep only a very small guard when images are involved.
     if (isClipboardCurrentPostAction) {
-      await sleep(120);
+      await sleep(imageUrls.length > 0 ? 30 : 0);
     } else {
       await sleep(300);
     }

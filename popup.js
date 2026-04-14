@@ -5,6 +5,7 @@ let isSendingComment = false;
 let runState = null;
 const selectedClipboardIds = new Set();
 const STORAGE_KEY_CLIPBOARD = 'commentClipboardItems';
+const STORAGE_KEY_SELECTED_CLIPBOARD_IDS = 'selectedClipboardIds';
 const STORAGE_KEY_TARGET_POST = 'targetPostUrl';
 const UPLOAD_TIMEOUT_MS = 9000;
 const MAX_UPLOAD_DIMENSION = 1600;
@@ -336,6 +337,34 @@ function updateSelectedClipboardCount() {
   counter.textContent = `Đã chọn: ${selectedClipboardIds.size}`;
 }
 
+async function saveSelectedClipboardIds() {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({
+      [STORAGE_KEY_SELECTED_CLIPBOARD_IDS]: Array.from(selectedClipboardIds)
+    }, () => resolve());
+  });
+}
+
+async function loadSelectedClipboardIds() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([STORAGE_KEY_SELECTED_CLIPBOARD_IDS], (result) => {
+      const stored = Array.isArray(result[STORAGE_KEY_SELECTED_CLIPBOARD_IDS])
+        ? result[STORAGE_KEY_SELECTED_CLIPBOARD_IDS]
+        : [];
+
+      selectedClipboardIds.clear();
+      for (const id of stored) {
+        if (typeof id === 'string' && id.trim()) {
+          selectedClipboardIds.add(id);
+        }
+      }
+
+      updateSelectedClipboardCount();
+      resolve();
+    });
+  });
+}
+
 function updateSelectedClipboardImageCount() {
   const counter = document.getElementById('selectedClipboardImageCount');
   if (!counter) return;
@@ -385,6 +414,33 @@ async function saveClipboardItems(items) {
   return new Promise((resolve) => {
     chrome.storage.local.set({ [STORAGE_KEY_CLIPBOARD]: normalized }, () => resolve());
   });
+}
+
+function downloadJsonFile(fileName, data) {
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportClipboardItems() {
+  const items = await getClipboardItems();
+  const exportedAt = new Date().toISOString();
+  const payload = {
+    exportedAt,
+    selectedIds: Array.from(selectedClipboardIds),
+    items
+  };
+
+  const stamp = exportedAt.replace(/[:.]/g, '-');
+  downloadJsonFile(`facebook-comment-clipboard-${stamp}.json`, payload);
 }
 
 function normalizeClipboardImageDataUrls(imageDataUrls) {
@@ -534,6 +590,8 @@ async function renderClipboardList() {
     }
   }
 
+  await saveSelectedClipboardIds();
+
   if (editingClipboardItemId && !items.some((item) => item.id === editingClipboardItemId)) {
     clearClipboardEditingState();
   }
@@ -541,6 +599,9 @@ async function renderClipboardList() {
   for (const item of items) {
     const itemEl = document.createElement('div');
     itemEl.className = 'clipboard-item';
+    if (selectedClipboardIds.has(item.id)) {
+      itemEl.classList.add('is-selected');
+    }
 
     const topEl = document.createElement('div');
     topEl.className = 'clipboard-item-top';
@@ -555,11 +616,12 @@ async function renderClipboardList() {
         selectedClipboardIds.delete(item.id);
       }
       updateSelectedClipboardCount();
+      saveSelectedClipboardIds();
     });
 
     const label = document.createElement('div');
     label.className = 'label';
-    label.textContent = 'Chọn comment này';
+    label.textContent = 'Chọn';
 
     topEl.appendChild(selector);
     topEl.appendChild(label);
@@ -573,14 +635,14 @@ async function renderClipboardList() {
     metaEl.className = 'hint';
     metaEl.style.marginTop = '6px';
     metaEl.style.marginBottom = '0';
-    metaEl.textContent = `Ảnh đã gắn: ${imageCount}`;
+    metaEl.textContent = `Ảnh: ${imageCount}`;
 
     const actionsEl = document.createElement('div');
     actionsEl.className = 'clipboard-item-actions';
 
     const useBtn = document.createElement('button');
     useBtn.type = 'button';
-    useBtn.textContent = 'Dùng';
+    useBtn.textContent = 'Lấy';
     useBtn.addEventListener('click', () => {
       fillFormFromClipboardText(item.text);
       const status = document.getElementById('status');
@@ -589,7 +651,7 @@ async function renderClipboardList() {
 
     const attachBtn = document.createElement('button');
     attachBtn.type = 'button';
-    attachBtn.textContent = 'Gắn ảnh';
+    attachBtn.textContent = 'Ảnh';
 
     const attachInput = document.createElement('input');
     attachInput.type = 'file';
@@ -648,6 +710,7 @@ async function renderClipboardList() {
       selectedClipboardIds.delete(item.id);
       const nextItems = items.filter((entry) => entry.id !== item.id);
       await saveClipboardItems(nextItems);
+      await saveSelectedClipboardIds();
       await renderClipboardList();
     });
 
@@ -1154,6 +1217,7 @@ async function initializeClipboardMenu() {
   const clearBtn = document.getElementById('clearClipboardInputBtn');
   const cancelEditBtn = document.getElementById('cancelClipboardEditBtn');
   const clearSelectedBtn = document.getElementById('clearSelectedClipboardBtn');
+  const exportBtn = document.getElementById('exportClipboardBtn');
 
   if (saveBtn) {
     saveBtn.addEventListener('click', async () => {
@@ -1227,8 +1291,22 @@ async function initializeClipboardMenu() {
     clearSelectedBtn.addEventListener('click', async () => {
       selectedClipboardIds.clear();
       updateSelectedClipboardCount();
+      await saveSelectedClipboardIds();
       await renderClipboardList();
       setUploadStatus('Đã bỏ chọn tất cả comment trong clipboard.');
+    });
+  }
+
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async () => {
+      const items = await getClipboardItems();
+      if (!items.length) {
+        setUploadStatus('Clipboard đang trống, chưa có gì để xuất.', true);
+        return;
+      }
+
+      await exportClipboardItems();
+      setUploadStatus(`Đã xuất ${items.length} comment clipboard ra file JSON.`);
     });
   }
 
@@ -1237,6 +1315,7 @@ async function initializeClipboardMenu() {
     clipboardInput.addEventListener('input', saveFormData);
   }
 
+  await loadSelectedClipboardIds();
   await renderClipboardList();
   updateSelectedClipboardCount();
   updateClipboardEditUI();

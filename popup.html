@@ -407,9 +407,9 @@
     }
 
     .clipboard-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px;
       margin-top: 8px;
       max-height: 280px;
       overflow: auto;
@@ -418,15 +418,22 @@
     .clipboard-item {
       border: 1px solid #f4c5df;
       border-radius: 12px;
-      padding: 10px 11px;
+      padding: 8px 9px;
       background: #fff;
+      box-shadow: 0 4px 10px rgba(170, 41, 108, 0.05);
+    }
+
+    .clipboard-item.is-selected {
+      border-color: #ef4ba5;
+      background: linear-gradient(180deg, #fff8fc 0%, #fff0f8 100%);
+      box-shadow: 0 10px 20px rgba(239, 75, 165, 0.12);
     }
 
     .clipboard-item-top {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 8px;
+      gap: 6px;
+      margin-bottom: 5px;
     }
 
     .clipboard-item-top input[type="checkbox"] {
@@ -437,32 +444,32 @@
     }
 
     .clipboard-item-top .label {
-      font-size: 12px;
+      font-size: 11px;
       color: #7c305c;
       font-weight: 700;
     }
 
     .clipboard-item-text {
-      font-size: 12px;
+      font-size: 11px;
       color: #5d2647;
-      line-height: 1.55;
+      line-height: 1.42;
       white-space: pre-wrap;
       word-break: break-word;
-      margin-bottom: 10px;
+      margin-bottom: 6px;
     }
 
     .clipboard-item-actions {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
     }
 
     .clipboard-item-actions button {
       width: auto;
-      min-width: 64px;
+      min-width: 52px;
       margin-bottom: 0;
-      padding: 8px 10px;
-      font-size: 12px;
+      padding: 7px 8px;
+      font-size: 11px;
     }
 
     .clipboard-empty {
@@ -571,6 +578,7 @@
             <input id="clipboardImageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
             <div id="selectedClipboardCount">Đã chọn: 0</div>
             <button id="clearSelectedClipboardBtn" type="button">Bỏ chọn</button>
+            <button id="exportClipboardBtn" type="button" class="clipboard-mini-btn">Xuất JSON</button>
             <button id="saveClipboardBtn" type="button" style="width:auto; min-width: 132px; margin-bottom:0; padding:7px 10px; font-size:12px;">Lưu comment</button>
           </div>
         </div>
