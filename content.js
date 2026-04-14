@@ -758,8 +758,14 @@ async function openComposerFromVisibleSurface(post) {
 // #region Submit Action Detection
 
 function findSubmitButtonNearComposer(composer) {
-  if (!composer) return null;
-  if (!isLikelyCommentComposer(composer)) return null;
+  if (!composer) {
+    console.log('[Submit] Composer is null');
+    return null;
+  }
+  if (!isLikelyCommentComposer(composer)) {
+    console.log('[Submit] Failed isLikelyCommentComposer check');
+    return null;
+  }
 
   // Only search very near composer to avoid clicking avatar/sticker tools.
   const searchContainers = [
@@ -770,6 +776,8 @@ function findSubmitButtonNearComposer(composer) {
     composer.closest('div[class*="compose"]')
   ].filter(Boolean);
 
+  console.log('[Submit] Search containers count:', searchContainers.length);
+
   const strongTokens = ['đăng', 'post', 'gửi', 'gui', 'send', 'submit', 'publish'];
   const weakTokens = ['bình luận', 'comment'];
   const bannedTokens = ['nhãn dán', 'sticker', 'avatar', 'gif', 'biểu tượng cảm xúc', 'emoji', 'ảnh', 'photo', 'video', 'camera', 'reel', 'thích', 'like', 'reaction', 'chia sẻ', 'share'];
@@ -777,6 +785,7 @@ function findSubmitButtonNearComposer(composer) {
   const composerRect = composer.getBoundingClientRect();
   const cx = composerRect.left + (composerRect.width / 2);
   const cy = composerRect.top + (composerRect.height / 2);
+  console.log('[Submit] Composer position:', { cx: Math.round(cx), cy: Math.round(cy) });
   let best = null;
   let bestScore = Number.NEGATIVE_INFINITY;
 
@@ -787,27 +796,47 @@ function findSubmitButtonNearComposer(composer) {
     if (directSubmit && isVisible(directSubmit)) {
       const text = `${directSubmit.textContent || ''} ${directSubmit.getAttribute('aria-label') || ''} ${directSubmit.getAttribute('title') || ''}`.toLowerCase();
       if (bannedTokens.some((token) => text.includes(token))) {
+        console.log('[Submit] Direct submit rejected - banned token in:', text.slice(0, 30));
         continue;
       }
       if (!/bình luận|binh luan|comment|trả lời|tra loi|reply/.test(text)) {
+        console.log('[Submit] Direct submit rejected - no submit keyword in:', text.slice(0, 30));
         continue;
       }
+      console.log('[Submit] Found explicit submit button:', text.slice(0, 30));
       return directSubmit;
     }
   }
 
   // Search in each container
+  let totalCandidates = 0;
   for (const container of searchContainers) {
     if (!container) continue;
     
     const candidates = Array.from(container.querySelectorAll('button, div[role="button"], span[role="button"]'));
+    console.log('[Submit] Container has', candidates.length, 'button candidates');
+    totalCandidates += candidates.length;
     
     for (const btn of candidates) {
+      // CRITICAL: Reject any button inside a link
+      if (btn.closest('a[href]')) {
+        continue;
+      }
+      if (btn.tagName === 'A' && btn.href) {
+        continue;
+      }
+
       const rect = btn.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) continue;
+      if (rect.width === 0 || rect.height === 0) {
+        console.log('[Submit] Candidate rejected - empty rect');
+        continue;
+      }
       
       const computedStyle = window.getComputedStyle(btn);
-      if (computedStyle.display === 'none' || computedStyle.visibility === 'hidden') continue;
+      if (computedStyle.display === 'none' || computedStyle.visibility === 'hidden') {
+        console.log('[Submit] Candidate rejected - hidden by style');
+        continue;
+      }
 
       const textContent = (btn.textContent || '').toLowerCase().trim();
       const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
@@ -816,7 +845,10 @@ function findSubmitButtonNearComposer(composer) {
 
       // Keep icon-only candidates as a last resort near the composer right edge.
       const iconOnlyCandidate = !text;
-      if (!iconOnlyCandidate && bannedTokens.some((token) => text.includes(token))) continue;
+      if (!iconOnlyCandidate && bannedTokens.some((token) => text.includes(token))) {
+        console.log('[Submit] Candidate rejected - banned token:', text.slice(0, 30));
+        continue;
+      }
 
       let score = 0;
       if (strongTokens.some((token) => text.includes(token))) score += 6;
@@ -837,16 +869,27 @@ function findSubmitButtonNearComposer(composer) {
         const onRightSide = bcx >= (composerRect.right - 120);
         const sameForm = !composer.closest('form') || btn.closest('form') === composer.closest('form');
         if (!(nearComposerRow && onRightSide && sameForm)) {
+          console.log('[Submit] Icon-only candidate rejected - wrong position:', { nearRow: nearComposerRow, rightSide: onRightSide, sameForm });
           continue;
         }
         score += 1;
       }
 
+      console.log('[Submit] Candidate evaluated:', { text: text.slice(0, 30), score, dist: Math.round(dist), iconOnly: iconOnlyCandidate });
+
       if (score > bestScore && score >= 1.5) {
+        console.log('[Submit] New best candidate:', text.slice(0, 30), 'score:', score);
         bestScore = score;
         best = btn;
       }
     }
+  }
+
+  if (best) {
+    const text = `${best.textContent || ''} ${best.getAttribute('aria-label') || ''}`.slice(0, 30);
+    console.log('[Submit] FINAL SELECTION:', text);
+  } else {
+    console.log('[Submit] No submit button found after scanning', totalCandidates, 'candidates');
   }
 
   return best;
@@ -917,37 +960,99 @@ async function didDraftLikelySubmit(composer, expectedText, context = {}) {
   return false;
 }
 
-async function submitCommentFromComposer(composer, expectedText = '', post = null) {
-  if (!composer) return false;
-  if (!isLikelyCommentComposer(composer)) return false;
+async function submitCommentFromComposer(composer, expectedText = '', post = null, options = {}) {
+  if (!composer) {
+    console.log('[Submit] Composer is null');
+    return false;
+  }
+  if (!isLikelyCommentComposer(composer)) {
+    console.log('[Submit] Not a likely comment composer');
+    return false;
+  }
 
+  const {
+    preferEnterFirst = false,
+    skipButtonClick = false,
+    skipFormSubmit = false
+  } = options;
+
+  console.log('[Submit] Starting submission...');
   const normalizedExpected = normalizeDraftText(expectedText || '');
   const beforeOccurrenceCount = post ? countTextOccurrences(post, normalizedExpected) : 0;
   const submitContext = { post, beforeOccurrenceCount };
 
-  const submitBtn = findSubmitButtonNearComposer(composer);
-  if (submitBtn) {
-    submitBtn.click();
-    const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
-    if (ok) return true;
+  const tryEnterSubmit = async () => {
+    console.log('[Submit] Using Enter key path...');
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    composer.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    return didDraftLikelySubmit(composer, expectedText, submitContext);
+  };
+
+  if (preferEnterFirst || skipButtonClick) {
+    const ok = await tryEnterSubmit();
+    console.log('[Submit] Enter-first result:', ok);
+    if (ok || skipButtonClick) return ok;
   }
 
-  const form = composer.closest('form');
-  if (form) {
-    if (typeof form.requestSubmit === 'function') {
-      form.requestSubmit();
-    } else {
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  if (!skipButtonClick) {
+    const submitBtn = findSubmitButtonNearComposer(composer);
+    if (submitBtn) {
+      console.log('[Submit] Clicking button...');
+      submitBtn.click();
+      console.log('[Submit] Button clicked, waiting for submission...');
+      const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
+      console.log('[Submit] After button click - submitted:', ok);
+      if (ok) return true;
     }
-    const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
-    if (ok) return true;
   }
 
-  // Fallback: many Facebook comment boxes submit on Enter.
+  if (!skipFormSubmit) {
+    console.log('[Submit] Falling back to form.requestSubmit()...');
+    const form = composer.closest('form');
+    if (form) {
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }
+      const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
+      console.log('[Submit] After form submit - submitted:', ok);
+      if (ok) return true;
+    }
+  }
+
+  // Final fallback: many Facebook comment boxes submit on Enter.
+  if (!preferEnterFirst) {
+    console.log('[Submit] Final fallback to Enter key...');
+    return tryEnterSubmit();
+  }
+
+  return false;
+}
+
+async function submitCommentFromComposerViaEnter(composer, expectedText = '', post = null) {
+  if (!composer) {
+    console.log('[Submit] Composer is null');
+    return false;
+  }
+  if (!isLikelyCommentComposer(composer)) {
+    console.log('[Submit] Not a likely comment composer');
+    return false;
+  }
+
+  console.log('[Submit] Menu2 direct Enter path...');
+  const normalizedExpected = normalizeDraftText(expectedText || '');
+  const beforeOccurrenceCount = post ? countTextOccurrences(post, normalizedExpected) : 0;
+  const submitContext = { post, beforeOccurrenceCount };
+
   composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
   composer.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
   composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-  return didDraftLikelySubmit(composer, expectedText, submitContext);
+
+  const ok = await didDraftLikelySubmit(composer, expectedText, submitContext);
+  console.log('[Submit] Menu2 direct Enter result:', ok);
+  return ok;
 }
 
 // #endregion
@@ -1157,26 +1262,49 @@ function findPhotoAttachButtonNearComposer(composer) {
     for (const btn of buttons) {
       if (!isVisible(btn)) continue;
 
+      // CRITICAL: Reject any button inside a link to prevent accidental navigation
+      if (btn.closest('a[href]')) {
+        console.log('[Photo Button] Rejected - button is inside link:', btn.textContent?.slice(0, 20));
+        continue;
+      }
+
+      // Reject buttons that are links themselves
+      if (btn.tagName === 'A' && btn.href) {
+        console.log('[Photo Button] Rejected - button is link:', btn.href);
+        continue;
+      }
+
       const text = `${btn.textContent || ''} ${btn.getAttribute('aria-label') || ''} ${btn.getAttribute('title') || ''}`
         .toLowerCase()
         .replace(/\s+/g, ' ')
         .trim();
 
       if (!text) continue;
-      if (banned.some((token) => text.includes(token))) continue;
-      if (!tokens.some((token) => text.includes(token))) continue;
+      if (banned.some((token) => text.includes(token))) {
+        console.log('[Photo Button] Rejected - banned token in:', text.slice(0, 40));
+        continue;
+      }
+      if (!tokens.some((token) => text.includes(token))) {
+        console.log('[Photo Button] Rejected - no image token in:', text.slice(0, 40));
+        continue;
+      }
 
       const rect = btn.getBoundingClientRect();
       const bx = rect.left + (rect.width / 2);
       const by = rect.top + (rect.height / 2);
       const dist = Math.hypot(bx - cx, by - cy);
       const nearComposer = by >= (composerRect.top - 220) && by <= (composerRect.bottom + 220);
-      if (!nearComposer || dist > 420) continue;
+      if (!nearComposer || dist > 420) {
+        console.log('[Photo Button] Out of range - dist:', dist);
+        continue;
+      }
 
       let score = 60 - (containerIndex * 10);
       score -= Math.min(dist / 45, 14);
       if (composerForm && btn.closest('form') === composerForm) score += 12;
       if (composerDialog && btn.closest('[role="dialog"]') === composerDialog) score += 16;
+
+      console.log('[Photo Button] Candidate - text:', text.slice(0, 30), 'score:', score);
 
       if (score > bestScore) {
         bestScore = score;
@@ -1185,21 +1313,53 @@ function findPhotoAttachButtonNearComposer(composer) {
     }
   }
 
+  if (best) {
+    console.log('[Photo Button] SELECTED:', best.textContent?.slice(0, 30), 'aria-label:', best.getAttribute('aria-label'));
+  } else {
+    console.log('[Photo Button] NO BUTTON FOUND');
+  }
+
   return best;
 }
 
 async function ensureImageInputReady(composer) {
   let input = findImageInputNearComposer(composer);
-  if (input) return input;
+  if (input) {
+    console.log('[Image Ready] Input already visible');
+    return input;
+  }
 
   const photoBtn = findPhotoAttachButtonNearComposer(composer);
   if (photoBtn) {
-    photoBtn.click();
+    console.log('[Image Ready] Clicking photo button...');
+    
+    // Add click handler to prevent any navigation
+    const handler = (e) => {
+      if (e.defaultPrevented) return;
+      // Allow the click but monitor for navigation
+      console.log('[Image Ready] Click event fired');
+    };
+    
+    photoBtn.addEventListener('click', handler, true);
+    
+    try {
+      photoBtn.click();
+    } finally {
+      photoBtn.removeEventListener('click', handler, true);
+    }
+    
     for (const waitMs of [120, 220, 420, 680]) {
       await sleep(waitMs);
       input = findImageInputNearComposer(composer);
-      if (input) return input;
+      console.log('[Image Ready] After wait', waitMs, 'ms - input found:', !!input);
+      if (input) {
+        console.log('[Image Ready] SUCCESS: input ready');
+        return input;
+      }
     }
+    console.log('[Image Ready] FAILED: no input after button click');
+  } else {
+    console.log('[Image Ready] No photo button found');
   }
 
   return null;
@@ -1670,7 +1830,7 @@ function getVisibleDialogs() {
 }
 
 function getVisibleMenu2PromptSurfaces(scope = document) {
-  const nodes = Array.from(scope.querySelectorAll([
+  const selectors = [
     '[aria-label*="bình luận dưới tên" i]',
     '[aria-label*="binh luan duoi ten" i]',
     '[aria-label*="comment as" i]',
@@ -1683,7 +1843,9 @@ function getVisibleMenu2PromptSurfaces(scope = document) {
     '[data-placeholder*="bình luận" i]',
     '[data-placeholder*="binh luan" i]',
     '[data-placeholder*="comment" i]'
-  ].join(', ')));
+  ];
+  const nodes = Array.from(scope.querySelectorAll(selectors.join(', ')));
+  console.log('[Menu2 Prompts] Found via selectors:', nodes.length, 'Visible:', nodes.filter(isVisible).length);
 
   return nodes
     .filter(isVisible)
@@ -1694,6 +1856,8 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
   const { probeOnly = false } = options;
   const dialogs = getVisibleDialogs();
   const allPosts = getPostContainers();
+
+  console.log('[Menu2 Detection] Probe mode:', probeOnly, 'Dialogs found:', dialogs.length, 'Posts found:', allPosts.length);
 
   const buildTargetFromComposer = (composer, candidatePosts = allPosts) => {
     if (!composer || isShareContextActive(composer)) return null;
@@ -1720,20 +1884,29 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
     };
   };
 
-  for (const dialog of dialogs) {
+  for (let i = 0; i < dialogs.length; i++) {
+    const dialog = dialogs[i];
     const dialogText = (dialog.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!dialogText) continue;
+    if (!dialogText) {
+      console.log('[Menu2] Dialog', i, 'skipped: empty text');
+      continue;
+    }
 
     // Skip share dialogs; Menu 2 must only work on opened post/comment context.
     if (dialogText.includes('chia sẻ ngay') || dialogText.includes('chia se ngay') || dialogText.includes('hãy nói gì về nội dung này') || dialogText.includes('hay noi gi ve noi dung nay')) {
+      console.log('[Menu2] Dialog', i, 'skipped: share dialog detected');
       continue;
     }
+
+    console.log('[Menu2] Processing dialog', i, 'text start:', dialogText.substring(0, 50));
 
     const dialogPosts = allPosts.filter((post) => dialog.contains(post));
     const dialogComposers = Array.from(dialog.querySelectorAll('div[contenteditable="true"], div[role="textbox"], span[role="textbox"]'))
       .filter(isVisible)
       .filter(isLikelyCommentComposer)
       .filter((node) => !isShareContextActive(node));
+
+    console.log('[Menu2] Dialog', i, '- composersFound:', dialogComposers.length);
 
     if (dialogComposers.length) {
       const picked = dialogComposers.find((node) => hasUnderNameHint(node))
@@ -1742,14 +1915,18 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
 
       const targetFromComposer = buildTargetFromComposer(picked, dialogPosts);
       if (targetFromComposer) {
+        console.log('[Menu2] Success: found composer in dialog', i);
         return targetFromComposer;
       }
     }
 
     // If only prompt surface is visible, treat as ready in probe mode.
-    const promptSurface = getVisibleMenu2PromptSurfaces(dialog)[0];
+    const promptSurfaces = getVisibleMenu2PromptSurfaces(dialog);
+    console.log('[Menu2] Dialog', i, '- promptSurfacesFound:', promptSurfaces.length);
+    const promptSurface = promptSurfaces[0];
 
     if (probeOnly && promptSurface) {
+      console.log('[Menu2] SUCCESS PROBE: prompt surface found in dialog', i);
       return {
         box: promptSurface,
         scannedPost: null,
@@ -1768,6 +1945,7 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
     }
 
     if (!probeOnly && promptSurface) {
+      console.log('[Menu2] Clicking prompt surface in dialog', i, 'to open composer...');
       promptSurface.click();
       for (const waitMs of [120, 220, 320]) {
         await sleep(waitMs);
@@ -1775,9 +1953,11 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
           .filter(isVisible)
           .filter(isLikelyCommentComposer)
           .filter((node) => !isShareContextActive(node));
+        console.log('[Menu2] After click wait', waitMs, 'ms - composers:', refreshed.length);
         if (refreshed.length) {
           const targetFromComposer = buildTargetFromComposer(refreshed[0], dialogPosts);
           if (targetFromComposer) {
+            console.log('[Menu2] SUCCESS: composer opened after click');
             return targetFromComposer;
           }
         }
@@ -1786,20 +1966,27 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
 
     // Last resort in dialog: try only the first likely post, not full scan.
     if (!probeOnly && dialogPosts.length) {
+      console.log('[Menu2] Trying ensureComposerReady on first post of dialog', i);
       const firstPost = dialogPosts[0];
       const box = await ensureComposerReady(firstPost, true);
       if (box && !isShareContextActive(box)) {
         const targetFromComposer = buildTargetFromComposer(box, dialogPosts);
         if (targetFromComposer) {
+          console.log('[Menu2] SUCCESS: ensureComposerReady worked');
           return targetFromComposer;
         }
       }
     }
   }
 
+  console.log('[Menu2] Dialog loop ended, trying global prompt fallback');
+
   if (probeOnly) {
-    const globalPrompt = getVisibleMenu2PromptSurfaces(document)[0];
+    const globalPrompts = getVisibleMenu2PromptSurfaces(document);
+    console.log('[Menu2] Global prompts found:', globalPrompts.length);
+    const globalPrompt = globalPrompts[0];
     if (globalPrompt) {
+      console.log('[Menu2] SUCCESS PROBE: global prompt found');
       return {
         box: globalPrompt,
         scannedPost: null,
@@ -1819,20 +2006,25 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
   }
 
   if (!probeOnly) {
-    const globalPrompt = getVisibleMenu2PromptSurfaces(document)[0];
+    const globalPrompts = getVisibleMenu2PromptSurfaces(document);
+    console.log('[Menu2] Global prompts found:', globalPrompts.length);
+    const globalPrompt = globalPrompts[0];
     if (globalPrompt) {
+      console.log('[Menu2] Clicking global prompt to open composer...');
       globalPrompt.click();
       for (const waitMs of [120, 220, 320]) {
         await sleep(waitMs);
         const refreshed = getVisibleComposers()
           .filter(isLikelyCommentComposer)
           .filter((node) => !isShareContextActive(node));
+        console.log('[Menu2] After global click wait', waitMs, 'ms - composers:', refreshed.length);
         if (refreshed.length) {
           const picked = refreshed.find((node) => hasUnderNameHint(node)) || refreshed[0];
           const ownerPost = getPostCandidateFromNode(picked) || findBestMatchedPostForNode(picked, allPosts);
           if (ownerPost) {
             const fingerprint = getPostFingerprint(ownerPost);
             const sessionKey = getSessionPostKey(ownerPost);
+            console.log('[Menu2] SUCCESS: composer opened from global prompt');
             return {
               box: picked,
               scannedPost: ownerPost,
@@ -1855,13 +2047,16 @@ async function findCurrentOpenedPostCommentBox(options = {}) {
 
   // Fallback: use active composer if user already focused comment box in opened post.
   const active = document.activeElement;
+  console.log('[Menu2] Checking active element, type:', active?.tagName, 'contenteditable:', active?.contentEditable);
   if (active && isLikelyCommentComposer(active) && !isShareContextActive(active)) {
+    console.log('[Menu2] SUCCESS: using active focused composer');
     const targetFromComposer = buildTargetFromComposer(active, allPosts);
     if (targetFromComposer) {
       return targetFromComposer;
     }
   }
 
+  console.log('[Menu2] FAILED: No post detected. Dialogs checked but none had prompt/composer.');
   return {
     none: true,
     processedSet: new Set(),
@@ -1904,8 +2099,11 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
 
   if (request.action === 'pingClipboardCurrentPost') {
     (async () => {
+      console.log('[Menu2 Ping] Starting clipboard current post probe...');
       const target = await findCurrentOpenedPostCommentBox({ probeOnly: true });
+      console.log('[Menu2 Ping] Probe result - target:', target?.none ? 'none' : 'found', 'promptOnly:', target?.promptOnly);
       if (target?.none) {
+        console.log('[Menu2 Ping] -> FAILED');
         sendResponse({
           status: 'not_ready',
           openedPostReady: false,
@@ -1916,6 +2114,7 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
         return;
       }
 
+      console.log('[Menu2 Ping] -> SUCCESS');
       sendResponse({
         status: 'ready',
         openedPostReady: true,
@@ -2048,11 +2247,16 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
       }));
     }
 
-    // Wait a bit for button to enable/appear
-    await sleep(300);
+    // Menu 2 should submit immediately by Enter to avoid leave-site navigation prompts.
+    if (isClipboardCurrentPostAction) {
+      await sleep(120);
+    } else {
+      await sleep(300);
+    }
 
-    // Submit via button/form/keyboard fallback.
-    const didSubmit = await submitCommentFromComposer(target.box, finalCommentText, target.post);
+    const didSubmit = isClipboardCurrentPostAction
+      ? await submitCommentFromComposerViaEnter(target.box, finalCommentText, target.post)
+      : await submitCommentFromComposer(target.box, finalCommentText, target.post);
     if (!didSubmit) {
       sendResponse({ status: 'SubmitFailed' });
       return;
