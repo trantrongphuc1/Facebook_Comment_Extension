@@ -443,6 +443,68 @@ async function exportClipboardItems() {
   downloadJsonFile(`facebook-comment-clipboard-${stamp}.json`, payload);
 }
 
+function normalizeImportedClipboardItem(item) {
+  const text = (item?.text || '').trim();
+  if (!text) return null;
+
+  return {
+    id: typeof item?.id === 'string' && item.id.trim() ? item.id.trim() : generateClipboardId(text),
+    text,
+    imageDataUrls: normalizeClipboardImageDataUrls(item?.imageDataUrls || []),
+    createdAt: typeof item?.createdAt === 'string' && item.createdAt.trim() ? item.createdAt.trim() : new Date().toISOString(),
+    updatedAt: typeof item?.updatedAt === 'string' && item.updatedAt.trim() ? item.updatedAt.trim() : new Date().toISOString()
+  };
+}
+
+function normalizeImportedClipboardItems(sourceItems) {
+  const items = Array.isArray(sourceItems) ? sourceItems : [];
+  const deduped = [];
+  const seenByText = new Map();
+
+  for (const item of items) {
+    const normalized = normalizeImportedClipboardItem(item);
+    if (!normalized) continue;
+
+    const existingIndex = seenByText.get(normalized.text);
+    if (existingIndex == null) {
+      seenByText.set(normalized.text, deduped.length);
+      deduped.push(normalized);
+      continue;
+    }
+
+    const existing = deduped[existingIndex];
+    deduped[existingIndex] = {
+      ...existing,
+      ...normalized,
+      imageDataUrls: normalized.imageDataUrls.length ? normalized.imageDataUrls : existing.imageDataUrls,
+      createdAt: existing.createdAt || normalized.createdAt,
+      updatedAt: normalized.updatedAt || existing.updatedAt
+    };
+  }
+
+  return deduped.slice(0, 200);
+}
+
+async function importClipboardItemsFromJson(payload) {
+  const importedItems = normalizeImportedClipboardItems(payload?.items ?? payload);
+  if (!importedItems.length) {
+    throw new Error('File JSON không có comment hợp lệ để nhập.');
+  }
+
+  const importedSelectedIds = Array.isArray(payload?.selectedIds)
+    ? payload.selectedIds.filter((id) => typeof id === 'string' && id.trim())
+    : [];
+  const selectedIds = importedSelectedIds.filter((id) => importedItems.some((item) => item.id === id));
+
+  await saveClipboardItems(importedItems);
+  selectedClipboardIds.clear();
+  for (const id of selectedIds) {
+    selectedClipboardIds.add(id);
+  }
+  await saveSelectedClipboardIds();
+  await renderClipboardList();
+}
+
 function normalizeClipboardImageDataUrls(imageDataUrls) {
   if (!Array.isArray(imageDataUrls)) return [];
   const urls = imageDataUrls
@@ -1217,6 +1279,8 @@ async function initializeClipboardMenu() {
   const clearBtn = document.getElementById('clearClipboardInputBtn');
   const cancelEditBtn = document.getElementById('cancelClipboardEditBtn');
   const clearSelectedBtn = document.getElementById('clearSelectedClipboardBtn');
+  const importBtn = document.getElementById('importClipboardBtn');
+  const importFileInput = document.getElementById('importClipboardFileInput');
   const exportBtn = document.getElementById('exportClipboardBtn');
 
   if (saveBtn) {
@@ -1294,6 +1358,52 @@ async function initializeClipboardMenu() {
       await saveSelectedClipboardIds();
       await renderClipboardList();
       setUploadStatus('Đã bỏ chọn tất cả comment trong clipboard.');
+    });
+  }
+
+  const deleteAllBtn = document.getElementById('deleteAllClipboardBtn');
+  if (deleteAllBtn) {
+    deleteAllBtn.addEventListener('click', async () => {
+      const items = await getClipboardItems();
+      if (!items.length) {
+        setUploadStatus('Clipboard đang trống, không có gì để xóa.', true);
+        return;
+      }
+
+      const confirmed = confirm(`Xác nhận xóa tất cả ${items.length} comment trong clipboard?\nHành động này không thể hoàn tác.`);
+      if (!confirmed) {
+        return;
+      }
+
+      await saveClipboardItems([]);
+      selectedClipboardIds.clear();
+      updateSelectedClipboardCount();
+      await saveSelectedClipboardIds();
+      clearClipboardEditingState();
+      await renderClipboardList();
+      setUploadStatus('Đã xóa tất cả comment trong clipboard.');
+    });
+  }
+
+  if (importBtn && importFileInput) {
+    importBtn.addEventListener('click', () => {
+      importFileInput.click();
+    });
+
+    importFileInput.addEventListener('change', async (event) => {
+      const file = (event.target.files || [])[0];
+      if (!file) return;
+
+      try {
+        const rawText = await file.text();
+        const parsed = JSON.parse(rawText);
+        await importClipboardItemsFromJson(parsed);
+        setUploadStatus(`Đã nhập JSON và khôi phục ${selectedClipboardIds.size} comment được chọn.`);
+      } catch (error) {
+        setUploadStatus(`Không nhập được JSON: ${error.message}`, true);
+      } finally {
+        importFileInput.value = '';
+      }
     });
   }
 
