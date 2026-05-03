@@ -633,16 +633,14 @@ async function renderClipboardList() {
   const listEl = document.getElementById('clipboardList');
   if (!listEl) return;
 
-  let items = await getClipboardItems();
-  
-  // Filter items by search query
+  const allItems = await getClipboardItems();
+  let items = allItems;
+
   if (clipboardSearchQuery) {
     const queryLower = clipboardSearchQuery.toLowerCase();
-    items = items.filter(item => 
-      item.text && item.text.toLowerCase().includes(queryLower)
-    );
+    items = items.filter((item) => item.text && item.text.toLowerCase().includes(queryLower));
   }
-  
+
   listEl.innerHTML = '';
 
   if (!items.length) {
@@ -658,14 +656,14 @@ async function renderClipboardList() {
   }
 
   for (const selectedId of Array.from(selectedClipboardIds)) {
-    if (!items.some((item) => item.id === selectedId)) {
+    if (!allItems.some((item) => item.id === selectedId)) {
       selectedClipboardIds.delete(selectedId);
     }
   }
 
   await saveSelectedClipboardIds();
 
-  if (editingClipboardItemId && !items.some((item) => item.id === editingClipboardItemId)) {
+  if (editingClipboardItemId && !allItems.some((item) => item.id === editingClipboardItemId)) {
     clearClipboardEditingState();
   }
 
