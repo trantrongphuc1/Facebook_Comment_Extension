@@ -15,6 +15,7 @@ const MAX_CLIPBOARD_IMAGE_BYTES = 420 * 1024;
 
 let pendingClipboardImages = [];
 let editingClipboardItemId = null;
+let clipboardSearchQuery = '';
 
 const UPLOAD_PROVIDERS = [
   {
@@ -632,16 +633,26 @@ async function renderClipboardList() {
   const listEl = document.getElementById('clipboardList');
   if (!listEl) return;
 
-  const items = await getClipboardItems();
+  let items = await getClipboardItems();
+  
+  // Filter items by search query
+  if (clipboardSearchQuery) {
+    const queryLower = clipboardSearchQuery.toLowerCase();
+    items = items.filter(item => 
+      item.text && item.text.toLowerCase().includes(queryLower)
+    );
+  }
+  
   listEl.innerHTML = '';
 
   if (!items.length) {
-    selectedClipboardIds.clear();
-    updateSelectedClipboardCount();
-
     const emptyEl = document.createElement('div');
     emptyEl.className = 'clipboard-empty';
-    emptyEl.textContent = 'Chưa có comment nào được lưu.';
+    if (clipboardSearchQuery) {
+      emptyEl.textContent = 'Không tìm thấy comment nào khớp với tìm kiếm.';
+    } else {
+      emptyEl.textContent = 'Chưa có comment nào được lưu.';
+    }
     listEl.appendChild(emptyEl);
     return;
   }
@@ -1423,6 +1434,14 @@ async function initializeClipboardMenu() {
   if (clipboardInput) {
     clipboardInput.addEventListener('change', saveFormData);
     clipboardInput.addEventListener('input', saveFormData);
+  }
+
+  const searchInput = document.getElementById('clipboardSearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', async (e) => {
+      clipboardSearchQuery = e.target.value.trim();
+      await renderClipboardList();
+    });
   }
 
   await loadSelectedClipboardIds();

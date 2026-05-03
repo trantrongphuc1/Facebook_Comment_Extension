@@ -124,6 +124,30 @@
       transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
     }
 
+    #clipboardSearchInput {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #f6badc;
+      background: #fff;
+      color: #5d2647;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+
+    #clipboardSearchInput:focus {
+      outline: none;
+      border-color: var(--rose-500);
+      box-shadow: var(--ring);
+      background: #fff;
+    }
+
+    #clipboardSearchInput::placeholder {
+      color: #b47799;
+    }
+
     textarea {
       min-height: 84px;
       resize: vertical;
@@ -568,6 +592,8 @@
         <input type="number" id="clipboardCommentsPerPost" placeholder="Số cmt trên post đang mở" min="1" max="200">
 
         <button id="startClipboardBtn" type="button">Chạy Menu 2</button>
+
+        <input type="text" id="clipboardSearchInput" placeholder="🔍 Tìm kiếm comment...">
 
         <div class="clipboard-panel">
         <div class="clipboard-head">
