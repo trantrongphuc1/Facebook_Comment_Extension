@@ -16,6 +16,11 @@ const MAX_CLIPBOARD_IMAGE_BYTES = 420 * 1024;
 let pendingClipboardImages = [];
 let editingClipboardItemId = null;
 let clipboardSearchQuery = '';
+let isAppInitialized = false;
+let isExtensionUnlocked = false;
+
+const STORAGE_KEY_AUTH_STATE = 'extensionAuthState';
+const ACTIVATION_PASSWORD = 'phuctrandev1@';
 
 const UPLOAD_PROVIDERS = [
   {
@@ -52,6 +57,87 @@ function setApiStatus(message, isError = false) {
   if (!statusEl) return;
   statusEl.textContent = message;
   statusEl.style.color = isError ? '#b42318' : '#7c305c';
+}
+
+function setAuthStatus(message, isError = false) {
+  const statusEl = document.getElementById('authStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.style.color = isError ? '#b42318' : '#7c305c';
+}
+
+function setAppVisibility(isLocked) {
+  const gate = document.getElementById('authGate');
+  const app = document.getElementById('appContent');
+
+  if (gate) {
+    gate.hidden = !isLocked;
+    gate.style.display = isLocked ? 'flex' : 'none';
+    gate.classList.toggle('is-hidden', !isLocked);
+  }
+
+  if (app) {
+    app.hidden = isLocked;
+    app.classList.toggle('is-hidden', isLocked);
+  }
+}
+
+function getActivationPasswordInput() {
+  return document.getElementById('activationPassword');
+}
+
+function saveAuthState(state) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [STORAGE_KEY_AUTH_STATE]: state }, () => resolve());
+  });
+}
+
+function loadAuthState() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([STORAGE_KEY_AUTH_STATE], (result) => {
+      resolve(result[STORAGE_KEY_AUTH_STATE] || null);
+    });
+  });
+}
+
+async function initializeExtensionLock() {
+  const storedState = await loadAuthState();
+  isExtensionUnlocked = Boolean(storedState?.unlocked);
+
+  if (isExtensionUnlocked) {
+    setAppVisibility(false);
+    initializeApp();
+    return;
+  }
+
+  setAppVisibility(true);
+  setAuthStatus('Nhập mật khẩu để kích hoạt extension.', false);
+}
+
+async function activateExtension() {
+  const passwordInput = getActivationPasswordInput();
+  const password = (passwordInput?.value || '').trim();
+
+  if (!password) {
+    setAuthStatus('Vui lòng nhập mật khẩu trước khi kích hoạt.', true);
+    return;
+  }
+
+  if (password !== ACTIVATION_PASSWORD) {
+    setAuthStatus('Mật khẩu không đúng.', true);
+    return;
+  }
+
+  await saveAuthState({
+    unlocked: true,
+    activatedAt: new Date().toISOString(),
+    passwordConfirmed: true
+  });
+
+  isExtensionUnlocked = true;
+  setAuthStatus('Đã kích hoạt. Extension sẽ tự mở ở những lần sau.');
+  setAppVisibility(false);
+  initializeApp();
 }
 
 function getDomainLabel(url) {
@@ -2333,6 +2419,21 @@ document.getElementById('nextBtn').addEventListener('click', () => {
 
 const STORAGE_KEY_FORM_DATA = 'formData';
 
+function initializeApp() {
+  if (isAppInitialized) return;
+  isAppInitialized = true;
+
+  loadFormData();
+  initializeFormAutoSave();
+  initializeImageUpload();
+  initializeApiCheckMenu();
+  initializeTabs();
+  initializeSmartSkipMenu();
+  initializeClipboardImagePicker();
+  initializeClipboardMenu();
+  initializeCommentModeTabs();
+}
+
 function saveFormData() {
   const formData = {
     description: document.getElementById('description').value,
@@ -2395,12 +2496,23 @@ function initializeCommentModeTabs() {
   clipboardTabBtn?.addEventListener('click', () => activate('clipboard'));
 }
 
-loadFormData();
-initializeFormAutoSave();
-initializeImageUpload();
-initializeApiCheckMenu();
-initializeTabs();
-initializeSmartSkipMenu();
-initializeClipboardImagePicker();
-initializeClipboardMenu();
-initializeCommentModeTabs();
+function initializeAuthGate() {
+  const activateBtn = document.getElementById('activateBtn');
+  const passwordInput = getActivationPasswordInput();
+
+  activateBtn?.addEventListener('click', () => {
+    activateExtension().catch((error) => {
+      setAuthStatus(`Không kích hoạt được: ${error.message}`, true);
+    });
+  });
+
+  passwordInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      activateBtn?.click();
+    }
+  });
+}
+
+initializeAuthGate();
+initializeExtensionLock();

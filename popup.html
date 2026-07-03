@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PhucTran auto comment</title>
   <style>
     * {
@@ -382,6 +383,85 @@
       display: none;
     }
 
+    .auth-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(255, 241, 248, 0.92);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+    }
+
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #fff5fb 100%);
+      box-shadow: var(--shadow);
+    }
+
+    .auth-card-inner {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .auth-title {
+      margin-bottom: 8px;
+      font-size: 16px;
+      font-weight: 800;
+      color: #8d1459;
+    }
+
+    .auth-desc {
+      margin-bottom: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #744563;
+    }
+
+    #activationPassword {
+      margin-bottom: 10px;
+    }
+
+    #activateBtn {
+      margin-bottom: 8px;
+    }
+
+    .clipboard-danger-btn {
+      background: linear-gradient(180deg, #e67c73 0%, #c8341d 100%);
+      box-shadow: 0 8px 16px rgba(200, 52, 29, 0.22);
+    }
+
+    .clipboard-save-btn {
+      width: auto;
+      min-width: 132px;
+      margin-bottom: 0;
+      padding: 7px 10px;
+      font-size: 12px;
+    }
+
+    .clipboard-edit-actions {
+      margin-bottom: 8px;
+    }
+
+    .next-run-btn {
+      display: none;
+    }
+
+    .skip-actions {
+      margin-top: 10px;
+    }
+
+    .api-panel-tight {
+      margin-bottom: 0;
+    }
+
     #selectedClipboardCount {
       font-size: 12px;
       color: #7c305c;
@@ -537,13 +617,26 @@
   </style>
 </head>
 <body>
-  <h2>PhucTran auto comment</h2>
-  <div class="tabs">
-    <button class="tab active" data-tab="comment">CMT Tools</button>
-    <button class="tab" data-tab="getapi">GET API</button>
-    <button class="tab" data-tab="smartskip">Smart Skip</button>    
-    <button class="tab" data-tab="guide">HƯỚNG DẪN</button>
+  <div id="authGate" class="auth-gate">
+    <div class="auth-card">
+      <div class="auth-card-inner">
+        <div class="auth-title">Kích hoạt bằng mật khẩu</div>
+        <div class="auth-desc">Nhập mật khẩu một lần để mở toàn bộ tính năng. Sau khi kích hoạt, extension sẽ tự ghi nhớ trên máy này.</div>
+        <input type="password" id="activationPassword" placeholder="Nhập mật khẩu kích hoạt">
+        <button id="activateBtn" type="button">Kích hoạt</button>
+        <div id="authStatus" class="hint"></div>
+      </div>
+    </div>
   </div>
+
+  <div id="appContent" class="is-hidden">
+    <h2>PhucTran auto comment</h2>
+    <div class="tabs">
+      <button class="tab active" data-tab="comment">CMT Tools</button>
+      <button class="tab" data-tab="getapi">GET API</button>
+      <button class="tab" data-tab="smartskip">Smart Skip</button>    
+      <button class="tab" data-tab="guide">HƯỚNG DẪN</button>
+    </div>
 
   <div id="commentTab" class="tab-content active">
     <div class="container">
@@ -572,7 +665,7 @@
           <div class="upload-actions">
             <button id="pickImagesBtn" type="button">Chọn ảnh từ máy</button>
           </div>
-          <input id="imageFileInput" type="file" accept="image/*" multiple style="display:none;">
+          <input id="imageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
           <div id="pasteArea" class="paste-area" tabindex="0">Bạn có thể Ctrl+V trực tiếp trong ô Hình ảnh hoặc dán tại đây</div>
           <div id="uploadStatus"></div>
         </div>
@@ -604,16 +697,16 @@
             <input id="clipboardImageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
             <div id="selectedClipboardCount">Đã chọn: 0</div>
             <button id="clearSelectedClipboardBtn" type="button">Bỏ chọn</button>
-            <button id="deleteAllClipboardBtn" type="button" class="clipboard-mini-btn" style="background: linear-gradient(180deg, #e67c73 0%, #c8341d 100%); box-shadow: 0 8px 16px rgba(200, 52, 29, 0.22);">Xóa tất cả</button>
+            <button id="deleteAllClipboardBtn" type="button" class="clipboard-mini-btn clipboard-danger-btn">Xóa tất cả</button>
             <button id="importClipboardBtn" type="button" class="clipboard-mini-btn">Nhập JSON</button>
             <input id="importClipboardFileInput" type="file" accept="application/json,.json" class="hidden-file-input">
             <button id="exportClipboardBtn" type="button" class="clipboard-mini-btn">Xuất JSON</button>
-            <button id="saveClipboardBtn" type="button" style="width:auto; min-width: 132px; margin-bottom:0; padding:7px 10px; font-size:12px;">Lưu comment</button>
+            <button id="saveClipboardBtn" type="button" class="clipboard-save-btn">Lưu comment</button>
           </div>
         </div>
         <div id="clipboardImageStatus" class="hint clipboard-image-status"></div>
         <textarea id="clipboardInput" placeholder="Dán hoặc gõ comment hoàn chỉnh để lưu, rồi dùng lại khi cần." rows="3"></textarea>
-        <div class="button-group" style="margin-bottom: 8px;">
+        <div class="button-group clipboard-edit-actions">
           <button id="cancelClipboardEditBtn" type="button" class="is-hidden">Hủy sửa</button>
           <button id="clearClipboardInputBtn" type="button">Xóa ô nhập</button>
         </div>
@@ -621,7 +714,7 @@
         </div>
       </div>
 
-      <button id="nextBtn" type="button" disabled style="display:none;">Điền comment tiếp theo</button>
+      <button id="nextBtn" type="button" disabled class="next-run-btn">Điền comment tiếp theo</button>
       <div id="status"></div>
       <div class="hint">Mẹo: Extension sẽ tự né post đã xử lý ngay cả khi bạn reload trang.</div>
     </div>
@@ -634,7 +727,7 @@
         Tính năng này đang bật tự động.
         Extension sẽ lưu dấu bài viết đã xử lý và tự bỏ qua khi bạn bấm điền tiếp, kể cả sau khi reload trang.
       </div>
-      <div class="button-group" style="margin-top: 10px;">
+      <div class="button-group skip-actions">
         <button id="resetSkipBtn" type="button">Đặt lại lịch sử bỏ qua</button>
       </div>
       <div id="skipStatus" class="hint"></div>
@@ -643,7 +736,7 @@
 
   <div id="getapiTab" class="tab-content">
     <div class="container">
-      <div class="api-panel" style="margin-bottom: 0;">
+      <div class="api-panel api-panel-tight">
         <div class="api-head">
           <div class="api-title">GET API - Kiểm tra trang hiện tại</div>
           <button id="getApiBtn" type="button">Kiểm tra</button>
@@ -671,8 +764,10 @@
         <li><strong>Nút Điền comment tiếp theo:</strong> Điền sang post tiếp theo chưa xử lý.</li>
         <li><strong>Tab GET API:</strong> Kiểm tra tab Facebook hiện tại đã sẵn sàng comment chưa.</li>
         <li><strong>Tab BỎ QUA THÔNG MINH:</strong> Tự động né các post đã điền trước đó.</li>
+        <li><strong>Kích hoạt mật khẩu:</strong> Nhập mật khẩu một lần ở màn hình đầu tiên để mở toàn bộ tính năng.</li>
       </ul>
     </div>
+  </div>
   </div>
   <script src="popup.js"></script>
 </body>
