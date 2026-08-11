@@ -20,7 +20,7 @@ let isAppInitialized = false;
 let isExtensionUnlocked = false;
 
 const STORAGE_KEY_AUTH_STATE = 'extensionAuthState';
-const ACTIVATION_PASSWORD = 'phuctrandev1@';
+const ACTIVATION_PASSWORD = 'Phuctrandev1@';
 
 const UPLOAD_PROVIDERS = [
   {
@@ -405,7 +405,7 @@ function finishRun(finalMessage) {
   runState = null;
 
   if (closingTabId) {
-    chrome.tabs.remove(closingTabId, () => {});
+    chrome.tabs.remove(closingTabId, () => { });
   }
 
   const nextBtn = document.getElementById('nextBtn');
@@ -483,8 +483,323 @@ function clearClipboardEditingState(resetInput = false) {
     if (clipboardInput) {
       clipboardInput.value = '';
     }
+    setFolderCheckboxes([]);
   }
   updateClipboardEditUI();
+}
+
+const STORAGE_KEY_FOLDERS = 'commentFolders';
+let folders = [];
+let activeFolderId = 'all'; // 'all', 'none', or folder.id
+
+function generateFolderId() {
+  return `folder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+async function getFolders() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([STORAGE_KEY_FOLDERS], (result) => {
+      const stored = Array.isArray(result[STORAGE_KEY_FOLDERS]) ? result[STORAGE_KEY_FOLDERS] : [];
+      resolve(stored);
+    });
+  });
+}
+
+async function saveFolders(nextFolders) {
+  folders = Array.isArray(nextFolders) ? nextFolders : [];
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [STORAGE_KEY_FOLDERS]: folders }, () => resolve());
+  });
+}
+
+async function renderFolderSection() {
+  const folderListEl = document.getElementById('folderList');
+  if (!folderListEl) return;
+
+  folderListEl.innerHTML = '';
+
+  // Add default "Tất cả" pill
+  const allPill = document.createElement('span');
+  allPill.className = `folder-pill${activeFolderId === 'all' ? ' active' : ''}`;
+  allPill.textContent = 'Tất cả';
+  allPill.addEventListener('click', () => {
+    activeFolderId = 'all';
+    renderFolderSection();
+    renderClipboardList();
+  });
+  folderListEl.appendChild(allPill);
+
+  // Add default "Chưa phân loại" pill
+  const nonePill = document.createElement('span');
+  nonePill.className = `folder-pill${activeFolderId === 'none' ? ' active' : ''}`;
+  nonePill.textContent = 'Chưa phân loại';
+  nonePill.addEventListener('click', () => {
+    activeFolderId = 'none';
+    renderFolderSection();
+    renderClipboardList();
+  });
+  folderListEl.appendChild(nonePill);
+
+  // Add custom folders
+  for (const folder of folders) {
+    const pill = document.createElement('span');
+    pill.className = `folder-pill${activeFolderId === folder.id ? ' active' : ''}`;
+    pill.textContent = folder.name;
+
+    // Click on folder to filter and select all comments in this folder
+    pill.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('delete-folder-btn')) return;
+
+      activeFolderId = folder.id;
+      
+      // Auto select comments in this folder
+      const items = await getClipboardItems();
+      selectedClipboardIds.clear();
+      for (const item of items) {
+        const fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+        if (fIds.includes(folder.id)) {
+          selectedClipboardIds.add(item.id);
+        }
+      }
+      await saveSelectedClipboardIds();
+      renderFolderSection();
+      renderClipboardList();
+      updateSelectedClipboardCount();
+    });
+
+    // Delete folder button
+    const deleteBtn = document.createElement('span');
+    deleteBtn.className = 'delete-folder-btn';
+    deleteBtn.textContent = '×';
+    deleteBtn.title = 'Xóa thư mục';
+    deleteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const confirmed = confirm(`Xác nhận xóa thư mục "${folder.name}"?\n(Các comment trong thư mục này sẽ chuyển thành Chưa phân loại, không bị xóa)`);
+      if (!confirmed) return;
+
+      const nextFolders = folders.filter((f) => f.id !== folder.id);
+      await saveFolders(nextFolders);
+
+      // Clean up comments having this folderId
+      const items = await getClipboardItems();
+      const nextItems = items.map((item) => {
+        let fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+        if (fIds.includes(folder.id)) {
+          fIds = fIds.filter((id) => id !== folder.id);
+        }
+        return {
+          ...item,
+          folderIds: fIds,
+          folderId: '' // Clear legacy single folderId
+        };
+      });
+      await saveClipboardItems(nextItems);
+
+      if (activeFolderId === folder.id) {
+        activeFolderId = 'all';
+      }
+
+      await renderFolderSection();
+      populateFolderDropdown();
+      renderClipboardList();
+    });
+
+    pill.appendChild(deleteBtn);
+    folderListEl.appendChild(pill);
+  }
+}
+
+function populateFolderCheckboxes() {
+  const container = document.getElementById('clipboardFolderCheckboxes');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (folders.length === 0) {
+    const empty = document.createElement('span');
+    empty.style.fontSize = '11px';
+    empty.style.color = '#8b4a70';
+    empty.textContent = '(Chưa có thư mục nào)';
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const folder of folders) {
+    const label = document.createElement('label');
+    label.style.fontSize = '11px';
+    label.style.display = 'flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '4px';
+    label.style.cursor = 'pointer';
+    label.style.color = '#7c305c';
+    label.style.userSelect = 'none';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = folder.id;
+    checkbox.className = 'folder-checkbox-item';
+    checkbox.style.width = 'auto';
+    checkbox.style.margin = '0';
+
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(folder.name));
+    container.appendChild(label);
+  }
+}
+
+function setFolderCheckboxes(folderIds = []) {
+  const checkboxes = document.querySelectorAll('.folder-checkbox-item');
+  checkboxes.forEach((cb) => {
+    cb.checked = folderIds.includes(cb.value);
+  });
+}
+
+function getSelectedFolderIds() {
+  const checkboxes = document.querySelectorAll('.folder-checkbox-item');
+  const ids = [];
+  checkboxes.forEach((cb) => {
+    if (cb.checked) {
+      ids.push(cb.value);
+    }
+  });
+  return ids;
+}
+
+function populateFolderDropdown() {
+  const bulkSelectEl = document.getElementById('bulkFolderSelect');
+
+  if (bulkSelectEl) {
+    while (bulkSelectEl.options.length > 1) {
+      bulkSelectEl.remove(1);
+    }
+    for (const folder of folders) {
+      const opt = document.createElement('option');
+      opt.value = folder.id;
+      opt.textContent = folder.name;
+      bulkSelectEl.appendChild(opt);
+    }
+  }
+
+  populateFolderCheckboxes();
+}
+
+async function initializeFoldersMenu() {
+  const addFolderBtn = document.getElementById('addFolderBtn');
+  const newFolderNameInput = document.getElementById('newFolderName');
+  const bulkAddFolderBtn = document.getElementById('bulkAddFolderBtn');
+  const bulkRemoveFolderBtn = document.getElementById('bulkRemoveFolderBtn');
+  const bulkFolderSelect = document.getElementById('bulkFolderSelect');
+
+  folders = await getFolders();
+  activeFolderId = 'all';
+
+  await renderFolderSection();
+  populateFolderDropdown();
+
+  if (addFolderBtn && newFolderNameInput) {
+    addFolderBtn.addEventListener('click', async () => {
+      const name = newFolderNameInput.value.trim();
+      if (!name) return;
+
+      const newFolder = {
+        id: generateFolderId(),
+        name
+      };
+
+      folders.push(newFolder);
+      await saveFolders(folders);
+
+      newFolderNameInput.value = '';
+      await renderFolderSection();
+      populateFolderDropdown();
+    });
+
+    newFolderNameInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        addFolderBtn.click();
+      }
+    });
+  }
+
+  if (bulkAddFolderBtn && bulkFolderSelect) {
+    bulkAddFolderBtn.addEventListener('click', async () => {
+      if (selectedClipboardIds.size === 0) {
+        setUploadStatus('Hãy tích chọn các comment trước.', true);
+        return;
+      }
+
+      const targetFolderId = bulkFolderSelect.value || '';
+      const items = await getClipboardItems();
+
+      const nextItems = items.map((item) => {
+        if (selectedClipboardIds.has(item.id)) {
+          let fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+          
+          if (targetFolderId) {
+            fIds = Array.from(new Set([...fIds, targetFolderId]));
+          } else {
+            fIds = []; // clear if "(Không chọn thư mục)" is selected
+          }
+
+          return {
+            ...item,
+            folderIds: fIds,
+            folderId: '', // Clear legacy single folderId
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return item;
+      });
+
+      await saveClipboardItems(nextItems);
+
+      const folderName = targetFolderId
+        ? (folders.find((f) => f.id === targetFolderId)?.name || 'thư mục đã chọn')
+        : 'Chưa phân loại';
+
+      setUploadStatus(`Đã thêm ${selectedClipboardIds.size} comment vào nhóm: ${folderName}`);
+      await renderFolderSection();
+      await renderClipboardList();
+    });
+  }
+
+  if (bulkRemoveFolderBtn && bulkFolderSelect) {
+    bulkRemoveFolderBtn.addEventListener('click', async () => {
+      if (selectedClipboardIds.size === 0) {
+        setUploadStatus('Hãy tích chọn các comment trước.', true);
+        return;
+      }
+
+      const targetFolderId = bulkFolderSelect.value || '';
+      if (!targetFolderId) {
+        setUploadStatus('Hãy chọn một thư mục cụ thể để xóa comment khỏi đó.', true);
+        return;
+      }
+
+      const items = await getClipboardItems();
+
+      const nextItems = items.map((item) => {
+        if (selectedClipboardIds.has(item.id)) {
+          let fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+          fIds = fIds.filter((id) => id !== targetFolderId);
+
+          return {
+            ...item,
+            folderIds: fIds,
+            folderId: '', // Clear legacy single folderId
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return item;
+      });
+
+      await saveClipboardItems(nextItems);
+
+      const folderObj = folders.find((f) => f.id === targetFolderId);
+      setUploadStatus(`Đã xóa các comment được chọn khỏi nhóm: ${folderObj?.name || 'thư mục đã chọn'}`);
+      await renderFolderSection();
+      await renderClipboardList();
+    });
+  }
 }
 
 async function getClipboardItems() {
@@ -519,10 +834,12 @@ function downloadJsonFile(fileName, data) {
 
 async function exportClipboardItems() {
   const items = await getClipboardItems();
+  const currentFolders = await getFolders();
   const exportedAt = new Date().toISOString();
   const payload = {
     exportedAt,
     selectedIds: Array.from(selectedClipboardIds),
+    folders: currentFolders,
     items
   };
 
@@ -534,10 +851,18 @@ function normalizeImportedClipboardItem(item) {
   const text = (item?.text || '').trim();
   if (!text) return null;
 
+  let fIds = [];
+  if (Array.isArray(item?.folderIds)) {
+    fIds = item.folderIds.filter((id) => typeof id === 'string' && id.trim());
+  } else if (typeof item?.folderId === 'string' && item.folderId.trim()) {
+    fIds = [item.folderId.trim()];
+  }
+
   return {
     id: typeof item?.id === 'string' && item.id.trim() ? item.id.trim() : generateClipboardId(text),
     text,
     imageDataUrls: normalizeClipboardImageDataUrls(item?.imageDataUrls || []),
+    folderIds: fIds,
     createdAt: typeof item?.createdAt === 'string' && item.createdAt.trim() ? item.createdAt.trim() : new Date().toISOString(),
     updatedAt: typeof item?.updatedAt === 'string' && item.updatedAt.trim() ? item.updatedAt.trim() : new Date().toISOString()
   };
@@ -578,6 +903,17 @@ async function importClipboardItemsFromJson(payload) {
     throw new Error('File JSON không có comment hợp lệ để nhập.');
   }
 
+  if (Array.isArray(payload?.folders)) {
+    const existingFolders = await getFolders();
+    const mergedFolders = [...existingFolders];
+    for (const inf of payload.folders) {
+      if (inf?.id && inf?.name && !mergedFolders.some((f) => f.id === inf.id)) {
+        mergedFolders.push({ id: inf.id, name: inf.name });
+      }
+    }
+    await saveFolders(mergedFolders);
+  }
+
   const importedSelectedIds = Array.isArray(payload?.selectedIds)
     ? payload.selectedIds.filter((id) => typeof id === 'string' && id.trim())
     : [];
@@ -589,6 +925,11 @@ async function importClipboardItemsFromJson(payload) {
     selectedClipboardIds.add(id);
   }
   await saveSelectedClipboardIds();
+
+  folders = await getFolders();
+  await renderFolderSection();
+  populateFolderDropdown();
+
   await renderClipboardList();
 }
 
@@ -722,6 +1063,20 @@ async function renderClipboardList() {
   const allItems = await getClipboardItems();
   let items = allItems;
 
+  if (activeFolderId && activeFolderId !== 'all') {
+    if (activeFolderId === 'none') {
+      items = items.filter((item) => {
+        const fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+        return fIds.length === 0;
+      });
+    } else {
+      items = items.filter((item) => {
+        const fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+        return fIds.includes(activeFolderId);
+      });
+    }
+  }
+
   if (clipboardSearchQuery) {
     const queryLower = clipboardSearchQuery.toLowerCase();
     items = items.filter((item) => item.text && item.text.toLowerCase().includes(queryLower));
@@ -782,6 +1137,19 @@ async function renderClipboardList() {
 
     topEl.appendChild(selector);
     topEl.appendChild(label);
+
+    const itemFolderIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+    if (itemFolderIds.length > 0) {
+      for (const fId of itemFolderIds) {
+        const folderObj = folders.find((f) => f.id === fId);
+        if (folderObj) {
+          const badge = document.createElement('span');
+          badge.className = 'comment-folder-badge';
+          badge.textContent = folderObj.name;
+          topEl.appendChild(badge);
+        }
+      }
+    }
 
     const textEl = document.createElement('div');
     textEl.className = 'clipboard-item-text';
@@ -881,9 +1249,15 @@ async function renderClipboardList() {
         clipboardInput.focus();
       }
 
+      const itemFolderIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+      setFolderCheckboxes(itemFolderIds);
+
       editingClipboardItemId = item.id;
       updateClipboardEditUI();
       setUploadStatus('Đang sửa comment trong ô nhập. Bấm Cập nhật comment để lưu.');
+
+      // Switch to CÀI ĐẶT tab so the user sees the edit form immediately
+      document.querySelector('.tab[data-tab="smartskip"]')?.click();
     });
 
     actionsEl.appendChild(useBtn);
@@ -903,7 +1277,7 @@ async function renderClipboardList() {
   updateSelectedClipboardCount();
 }
 
-async function addClipboardItem(text, imageDataUrls = []) {
+async function addClipboardItem(text, imageDataUrls = [], folderIds = []) {
   const normalized = (text || '').trim();
   if (!normalized) return false;
 
@@ -913,15 +1287,20 @@ async function addClipboardItem(text, imageDataUrls = []) {
 
   if (existingIndex >= 0) {
     const existing = items[existingIndex];
-    if (sanitizedImages.length) {
-      items[existingIndex] = {
-        ...existing,
-        imageDataUrls: sanitizedImages,
-        updatedAt: new Date().toISOString()
-      };
-      await saveClipboardItems(items);
-      await renderClipboardList();
+    let mergedFolderIds = Array.isArray(existing.folderIds) ? existing.folderIds : (existing.folderId ? [existing.folderId] : []);
+    if (Array.isArray(folderIds) && folderIds.length > 0) {
+      mergedFolderIds = Array.from(new Set([...mergedFolderIds, ...folderIds]));
     }
+
+    items[existingIndex] = {
+      ...existing,
+      imageDataUrls: sanitizedImages.length ? sanitizedImages : existing.imageDataUrls,
+      folderIds: mergedFolderIds,
+      folderId: '',
+      updatedAt: new Date().toISOString()
+    };
+    await saveClipboardItems(items);
+    await renderClipboardList();
     return true;
   }
 
@@ -929,6 +1308,8 @@ async function addClipboardItem(text, imageDataUrls = []) {
     id: generateClipboardId(normalized),
     text: normalized,
     imageDataUrls: sanitizedImages,
+    folderIds: Array.isArray(folderIds) ? folderIds : [],
+    folderId: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -1400,12 +1781,16 @@ async function initializeClipboardMenu() {
           ? normalizeClipboardImageDataUrls(pendingClipboardImages)
           : normalizeClipboardImageDataUrls(existing.imageDataUrls || []);
 
+        const folderIds = getSelectedFolderIds();
+
         const nextItems = items.map((entry) => {
           if (entry.id !== editingClipboardItemId) return entry;
           return {
             ...entry,
             text,
             imageDataUrls: nextImages,
+            folderIds,
+            folderId: '',
             updatedAt: new Date().toISOString()
           };
         });
@@ -1420,7 +1805,8 @@ async function initializeClipboardMenu() {
         return;
       }
 
-      await addClipboardItem(text, pendingClipboardImages);
+      const folderIds = getSelectedFolderIds();
+      await addClipboardItem(text, pendingClipboardImages, folderIds);
       if (clipboardInput) clipboardInput.value = text;
       setUploadStatus(`Đã lưu comment vào clipboard${pendingClipboardImages.length ? ` (kèm ${pendingClipboardImages.length} ảnh)` : ''}.`);
       pendingClipboardImages = [];
@@ -1432,6 +1818,7 @@ async function initializeClipboardMenu() {
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
       if (clipboardInput) clipboardInput.value = '';
+      setFolderCheckboxes([]);
       if (editingClipboardItemId) {
         clearClipboardEditingState();
       }
@@ -2431,19 +2818,19 @@ function initializeApp() {
   initializeSmartSkipMenu();
   initializeClipboardImagePicker();
   initializeClipboardMenu();
-  initializeCommentModeTabs();
+  initializeFoldersMenu();
 }
 
 function saveFormData() {
   const formData = {
-    description: document.getElementById('description').value,
-    fees: document.getElementById('fees').value,
-    price: document.getElementById('price').value,
-    amenities: document.getElementById('amenities').value,
-    images: document.getElementById('images').value,
-    contactPhone: document.getElementById('contactPhone').value,
-    numPosts: document.getElementById('numPosts').value,
-    targetPostUrl: document.getElementById('targetPostUrl').value,
+    description: document.getElementById('description')?.value || '',
+    fees: document.getElementById('fees')?.value || '',
+    price: document.getElementById('price')?.value || '',
+    amenities: document.getElementById('amenities')?.value || '',
+    images: document.getElementById('images')?.value || '',
+    contactPhone: document.getElementById('contactPhone')?.value || '',
+    numPosts: document.getElementById('numPosts')?.value || '',
+    targetPostUrl: document.getElementById('targetPostUrl')?.value || '',
     clipboardCommentsPerPost: document.getElementById('clipboardCommentsPerPost')?.value || ''
   };
 
@@ -2478,23 +2865,7 @@ function initializeFormAutoSave() {
   }
 }
 
-function initializeCommentModeTabs() {
-  const formTabBtn = document.getElementById('formModeTabBtn');
-  const clipboardTabBtn = document.getElementById('clipboardModeTabBtn');
-  const formPanel = document.getElementById('formModePanel');
-  const clipboardPanel = document.getElementById('clipboardModePanel');
-
-  const activate = (mode) => {
-    const formActive = mode === 'form';
-    formTabBtn?.classList.toggle('active', formActive);
-    clipboardTabBtn?.classList.toggle('active', !formActive);
-    formPanel?.classList.toggle('active', formActive);
-    clipboardPanel?.classList.toggle('active', !formActive);
-  };
-
-  formTabBtn?.addEventListener('click', () => activate('form'));
-  clipboardTabBtn?.addEventListener('click', () => activate('clipboard'));
-}
+// Removed initializeCommentModeTabs as Form Mode is disabled
 
 function initializeAuthGate() {
   const activateBtn = document.getElementById('activateBtn');
@@ -2516,3 +2887,10 @@ function initializeAuthGate() {
 
 initializeAuthGate();
 initializeExtensionLock();
+
+// Listen to stopRun messages from the content script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'stopRun') {
+    finishRun(`Dừng batch: ${request.reason || 'người dùng hủy'}`);
+  }
+});

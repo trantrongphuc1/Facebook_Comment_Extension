@@ -2300,4 +2300,19 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener(window.__fbAutoCommentOnMessageHandler);
 
+// Press ESC to stop running
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    chrome.runtime.sendMessage({ action: 'stopRun', reason: 'Bạn đã nhấn phím Escape' }).catch(() => {});
+  }
+}, true);
+
+// Click close button of dialog/popup to stop running
+window.addEventListener('click', (event) => {
+  const closeButton = event.target.closest('[role="button"][aria-label*="Đóng" i], [role="button"][aria-label*="Close" i], button[aria-label*="Đóng" i], button[aria-label*="Close" i]');
+  if (closeButton) {
+    chrome.runtime.sendMessage({ action: 'stopRun', reason: 'Popup comment đã bị tắt' }).catch(() => {});
+  }
+}, true);
+
 // #endregion

@@ -52,3 +52,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 	return true;
 });
+
+// Configure side panel to open on action button click
+chrome.sidePanel
+	.setPanelBehavior({ openPanelOnActionClick: true })
+	.catch((error) => console.error(error));

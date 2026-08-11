@@ -29,7 +29,7 @@
     }
 
     body {
-      width: 560px;
+      width: 100%;
       min-height: 520px;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background:
@@ -277,6 +277,106 @@
       font-size: 11px;
       color: #8b4a70;
       min-height: 16px;
+    }
+
+    /* Folder styling */
+    .folder-section {
+      margin-top: 12px;
+      margin-bottom: 12px;
+      padding: 10px;
+      background: #fff0f7;
+      border: 1px solid #f4c5df;
+      border-radius: 12px;
+    }
+
+    .folder-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #8d1459;
+      margin-bottom: 6px;
+    }
+
+    .folder-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .folder-pill {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 20px;
+      border: 1px solid #f4c5df;
+      background: #fff;
+      color: #7c305c;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+    }
+
+    .folder-pill.active {
+      background: #8f4f78;
+      border-color: #8f4f78;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .folder-pill .delete-folder-btn {
+      font-weight: bold;
+      color: #e67c73;
+      margin-left: 4px;
+      cursor: pointer;
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      line-height: 12px;
+      text-align: center;
+      border-radius: 50%;
+    }
+
+    .folder-pill.active .delete-folder-btn {
+      color: #ffcdd2;
+    }
+
+    .folder-pill .delete-folder-btn:hover {
+      background: rgba(0, 0, 0, 0.15);
+      color: #d32f2f;
+    }
+
+    .folder-add-box {
+      display: flex;
+      gap: 6px;
+    }
+
+    .folder-add-box input {
+      flex: 1;
+      height: 28px;
+      font-size: 11px;
+      margin-bottom: 0;
+      padding: 0 8px;
+    }
+
+    .folder-add-box button {
+      width: auto;
+      height: 28px;
+      font-size: 11px;
+      padding: 0 10px;
+      margin-bottom: 0;
+      line-height: 28px;
+    }
+
+    .comment-folder-badge {
+      display: inline-block;
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      background: #f1a9d0;
+      color: #fff;
+      margin-left: 6px;
+      font-weight: bold;
     }
 
     .api-panel {
@@ -634,57 +734,36 @@
     <div class="tabs">
       <button class="tab active" data-tab="comment">CMT Tools</button>
       <button class="tab" data-tab="getapi">GET API</button>
-      <button class="tab" data-tab="smartskip">Smart Skip</button>    
+      <button class="tab" data-tab="smartskip">CÀI ĐẶT</button>    
       <button class="tab" data-tab="guide">HƯỚNG DẪN</button>
     </div>
 
   <div id="commentTab" class="tab-content active">
     <div class="container">
-      <div class="mode-tabs">
-        <button id="formModeTabBtn" type="button" class="mode-tab active">Menu 1: Theo Form</button>
-        <button id="clipboardModeTabBtn" type="button" class="mode-tab">Menu 2: Theo Clipboard</button>
-      </div>
+      <div id="clipboardModePanel" class="mode-panel active">
+        <div class="section-title">Cấu hình tự động comment từ Clipboard</div>
+        <div class="mini-hint">Mở đúng bài viết Facebook cần comment rồi bấm Bắt đầu chạy.</div>
 
-      <div id="formModePanel" class="mode-panel active">
-        <div class="section-title">Menu 1: 1 comment form cho nhiều post</div>
-        <div class="mini-hint">Tạo 1 comment từ form, bot sẽ dùng comment đó cho số post bạn nhập.</div>
+        <input type="number" id="clipboardCommentsPerPost" placeholder="Số comment cần điền trên post đang mở" min="1" max="200">
 
-        <textarea id="description" placeholder="Mô tả (bắt buộc)" rows="3"></textarea>
+        <button id="startClipboardBtn" type="button">Bắt đầu chạy</button>
 
-        <div class="field-grid">
-          <input type="text" id="fees" placeholder="Tiền dịch vụ, tiền xe, tiền điện">
-          <input type="text" id="price" placeholder="Giá">
-          <input type="text" id="amenities" placeholder="Tiện nghi">
-          <input type="text" id="images" placeholder="Hình ảnh">
-        </div>
-
-        <input type="text" id="contactPhone" placeholder="SĐT liên lạc (tùy chọn)">
-        <input type="text" id="targetPostUrl" placeholder="URL bài viết cần comment (tùy chọn)">
-
-        <div class="upload-panel">
-          <div class="upload-actions">
-            <button id="pickImagesBtn" type="button">Chọn ảnh từ máy</button>
+        <div class="folder-section">
+          <div class="folder-title">Thư mục comment</div>
+          <div id="folderList" class="folder-list"></div>
+          <div class="folder-add-box">
+            <input type="text" id="newFolderName" placeholder="Tên thư mục mới...">
+            <button id="addFolderBtn" type="button">Thêm</button>
           </div>
-          <input id="imageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
-          <div id="pasteArea" class="paste-area" tabindex="0">Bạn có thể Ctrl+V trực tiếp trong ô Hình ảnh hoặc dán tại đây</div>
-          <div id="uploadStatus"></div>
+          <div class="folder-bulk-assign" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-top: 1px dashed #f4c5df; padding-top: 8px;">
+            <span style="font-size: 11px; color: #7c305c; white-space: nowrap;">Gán cmt đã chọn:</span>
+            <select id="bulkFolderSelect" style="flex: 1; min-width: 120px; height: 28px; font-size: 11px; padding: 0 6px; margin-bottom: 0; border: 1px solid #f4c5df; border-radius: 6px; background: white;">
+              <option value="">(Không chọn thư mục - Đặt lại)</option>
+            </select>
+            <button id="bulkAddFolderBtn" type="button" style="width: auto; height: 28px; font-size: 11px; padding: 0 8px; margin-bottom: 0; line-height: 28px;">Thêm vào</button>
+            <button id="bulkRemoveFolderBtn" type="button" style="width: auto; height: 28px; font-size: 11px; padding: 0 8px; margin-bottom: 0; line-height: 28px; background: #e67c73;">Xóa khỏi</button>
+          </div>
         </div>
-
-        <input type="number" id="numPosts" placeholder="Số post" min="1" max="200">
-
-        <div class="button-group">
-          <button id="saveFormToClipboardBtn" type="button">Lưu comment form vào clipboard</button>
-          <button id="startFormBtn" type="button">Chạy Menu 1</button>
-        </div>
-      </div>
-
-      <div id="clipboardModePanel" class="mode-panel">
-        <div class="section-title">Menu 2: Clipboard nhiều comment mỗi post</div>
-        <div class="mini-hint">Mở đúng post cần comment rồi chạy Menu 2. Extension sẽ chỉ chạy trên post đang mở.</div>
-
-        <input type="number" id="clipboardCommentsPerPost" placeholder="Số cmt trên post đang mở" min="1" max="200">
-
-        <button id="startClipboardBtn" type="button">Chạy Menu 2</button>
 
         <input type="text" id="clipboardSearchInput" placeholder="🔍 Tìm kiếm comment...">
 
@@ -692,23 +771,9 @@
         <div class="clipboard-head">
           <div class="clipboard-title">Clipboard comment</div>
           <div class="head-actions">
-            <div id="selectedClipboardImageCount">Ảnh gắn mới: 0</div>
-            <button id="pickClipboardImagesBtn" type="button" class="clipboard-mini-btn">Chọn ảnh</button>
-            <input id="clipboardImageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
             <div id="selectedClipboardCount">Đã chọn: 0</div>
-            <button id="clearSelectedClipboardBtn" type="button">Bỏ chọn</button>
-            <button id="deleteAllClipboardBtn" type="button" class="clipboard-mini-btn clipboard-danger-btn">Xóa tất cả</button>
-            <button id="importClipboardBtn" type="button" class="clipboard-mini-btn">Nhập JSON</button>
-            <input id="importClipboardFileInput" type="file" accept="application/json,.json" class="hidden-file-input">
-            <button id="exportClipboardBtn" type="button" class="clipboard-mini-btn">Xuất JSON</button>
-            <button id="saveClipboardBtn" type="button" class="clipboard-save-btn">Lưu comment</button>
+            <button id="clearSelectedClipboardBtn" type="button" style="width: auto; margin-bottom: 0; padding: 6px 12px;">Bỏ chọn</button>
           </div>
-        </div>
-        <div id="clipboardImageStatus" class="hint clipboard-image-status"></div>
-        <textarea id="clipboardInput" placeholder="Dán hoặc gõ comment hoàn chỉnh để lưu, rồi dùng lại khi cần." rows="3"></textarea>
-        <div class="button-group clipboard-edit-actions">
-          <button id="cancelClipboardEditBtn" type="button" class="is-hidden">Hủy sửa</button>
-          <button id="clearClipboardInputBtn" type="button">Xóa ô nhập</button>
         </div>
         <div id="clipboardList" class="clipboard-list"></div>
         </div>
@@ -716,12 +781,38 @@
 
       <button id="nextBtn" type="button" disabled class="next-run-btn">Điền comment tiếp theo</button>
       <div id="status"></div>
+      <div id="uploadStatus"></div>
       <div class="hint">Mẹo: Extension sẽ tự né post đã xử lý ngay cả khi bạn reload trang.</div>
     </div>
   </div>
 
   <div id="smartskipTab" class="tab-content">
     <div class="container">
+      <div class="section-title">THÊM / SỬA COMMENT CLIPBOARD</div>
+      <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+        <div id="selectedClipboardImageCount" style="font-size: 11px; color: #7c305c; font-weight: bold; margin-right: auto;">Ảnh gắn mới: 0</div>
+        <button id="pickClipboardImagesBtn" type="button" class="clipboard-mini-btn" style="width: auto; margin-bottom: 0; padding: 6px 12px;">Chọn ảnh</button>
+        <input id="clipboardImageFileInput" type="file" accept="image/*" multiple class="hidden-file-input">
+        <button id="saveClipboardBtn" type="button" class="clipboard-save-btn" style="width: auto; margin-bottom: 0; padding: 6px 12px; background: linear-gradient(180deg, #ef4ba5 0%, #d52e8a 100%);">Lưu comment</button>
+      </div>
+      <div id="clipboardImageStatus" class="hint clipboard-image-status"></div>
+
+      <div id="clipboardFolderCheckboxContainer" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;">
+        <span style="font-size: 11px; font-weight: bold; color: #7c305c;">Chọn các thư mục chứa comment:</span>
+        <div id="clipboardFolderCheckboxes" style="display: flex; flex-wrap: wrap; gap: 8px; background: white; border: 1px solid #f4c5df; border-radius: 8px; padding: 6px; min-height: 28px; align-items: center; width: 100%; box-sizing: border-box;">
+          <!-- Dynamically populated folder checkboxes -->
+        </div>
+      </div>
+
+      <textarea id="clipboardInput" placeholder="Dán hoặc gõ comment hoàn chỉnh để lưu, rồi dùng lại khi cần." rows="3" style="width: 100%; box-sizing: border-box;"></textarea>
+      
+      <div class="button-group clipboard-edit-actions" style="margin-top: 8px; display: flex; gap: 8px;">
+        <button id="cancelClipboardEditBtn" type="button" class="is-hidden" style="margin-bottom: 0; flex: 1; padding: 8px;">Hủy sửa</button>
+        <button id="clearClipboardInputBtn" type="button" style="margin-bottom: 0; flex: 1; padding: 8px;">Xóa ô nhập</button>
+      </div>
+    </div>
+
+    <div class="container" style="margin-top: 12px;">
       <div class="section-title">BỎ QUA THÔNG MINH</div>
       <div class="hint">
         Tính năng này đang bật tự động.
@@ -731,6 +822,19 @@
         <button id="resetSkipBtn" type="button">Đặt lại lịch sử bỏ qua</button>
       </div>
       <div id="skipStatus" class="hint"></div>
+    </div>
+
+    <div class="container" style="margin-top: 12px;">
+      <div class="section-title">QUẢN LÝ DỮ LIỆU COMMENT</div>
+      <div class="hint">
+        Sao lưu comment ra file JSON, khôi phục từ file JSON hoặc xóa toàn bộ dữ liệu comment.
+      </div>
+      <div class="button-group" style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+        <button id="importClipboardBtn" type="button" style="margin-bottom: 0; flex: 1; min-width: 100px;">Nhập JSON</button>
+        <input id="importClipboardFileInput" type="file" accept="application/json,.json" class="hidden-file-input">
+        <button id="exportClipboardBtn" type="button" style="margin-bottom: 0; flex: 1; min-width: 100px;">Xuất JSON</button>
+        <button id="deleteAllClipboardBtn" type="button" class="clipboard-mini-btn clipboard-danger-btn" style="margin-bottom: 0; flex: 1; min-width: 120px;">Xóa tất cả cmt</button>
+      </div>
     </div>
   </div>
 
@@ -748,23 +852,19 @@
 
   <div id="guideTab" class="tab-content">
     <div class="container">
-      <div class="section-title">Hướng dẫn từng ô</div>
+      <div class="section-title">Hướng dẫn sử dụng</div>
       <ul class="guide-list">
-        <li><strong>Mô tả (bắt buộc):</strong> Nhập nội dung chính của bài đăng.</li>
-        <li><strong>Tiền dịch vụ, tiền xe, tiền điện:</strong> Nhập trong 1 ô, ngăn cách dấu phẩy. Ví dụ: <strong>200k, 100k, 3.5k/số</strong>.</li>
-        <li><strong>Giá:</strong> Ví dụ <strong>3tr2/tháng</strong> hoặc <strong>3.200.000</strong>.</li>
-        <li><strong>Tiện nghi:</strong> Ví dụ <strong>máy lạnh, tủ lạnh, WC riêng</strong>.</li>
-        <li><strong>Hình ảnh:</strong> Dán link ảnh, hoặc Ctrl+V ảnh trực tiếp để extension tự upload và chèn link.</li>
-        <li><strong>SĐT liên lạc:</strong> Ví dụ <strong>09xxxxxxxx</strong>. Bỏ trống nếu không muốn hiện.</li>
-        <li><strong>URL bài viết:</strong> Dán link bài viết Facebook để bot comment đúng vào bài đó.</li>
-        <li><strong>Dùng clipboard:</strong> Bật nếu muốn lấy comment từ danh sách đã lưu thay vì tạo từ form.</li>
-        <li><strong>Số cmt:</strong> Số comment khác nhau lấy từ clipboard cho lần chạy hiện tại.</li>
-        <li><strong>Số post:</strong> Số lượng comment cần điền.</li>
-        <li><strong>Nút Bắt đầu điền comment:</strong> Điền comment đầu tiên.</li>
-        <li><strong>Nút Điền comment tiếp theo:</strong> Điền sang post tiếp theo chưa xử lý.</li>
-        <li><strong>Tab GET API:</strong> Kiểm tra tab Facebook hiện tại đã sẵn sàng comment chưa.</li>
-        <li><strong>Tab BỎ QUA THÔNG MINH:</strong> Tự động né các post đã điền trước đó.</li>
-        <li><strong>Kích hoạt mật khẩu:</strong> Nhập mật khẩu một lần ở màn hình đầu tiên để mở toàn bộ tính năng.</li>
+        <li><strong>Số comment trên post đang mở:</strong> Số lượng comment khác nhau lấy từ clipboard để điền trên bài viết đang mở.</li>
+        <li><strong>Nút Bắt đầu chạy:</strong> Bắt đầu điền comment tự động vào bài viết đang mở.</li>
+        <li><strong>Tìm kiếm comment:</strong> Lọc danh sách comment đã lưu theo từ khóa.</li>
+        <li><strong>Thư mục comment:</strong> Tạo các nhóm comment riêng (ví dụ: "Dưới 3.5tr"). Khi click chọn một thư mục, extension sẽ tự động lọc danh sách và chọn tất cả comment trong thư mục đó để chạy lần lượt.</li>
+        <li><strong>Clipboard comment:</strong> Nơi quản lý, thêm, sửa, xóa, và chọn các comment mẫu để sử dụng.</li>
+        <li><strong>Chọn ảnh:</strong> Chọn một hoặc nhiều ảnh từ máy tính để đính kèm cho comment đang soạn.</li>
+        <li><strong>Lưu comment:</strong> Nhập nội dung và lưu comment mới vào clipboard để sử dụng lại sau.</li>
+        <li><strong>Nhập / Xuất JSON:</strong> Backup hoặc khôi phục danh sách comment.</li>
+        <li><strong>Tab GET API:</strong> Kiểm tra tab Facebook hiện tại đã sẵn sàng để comment chưa.</li>
+        <li><strong>CÀI ĐẶT:</strong> Quản lý lịch sử bỏ qua (Bỏ qua thông minh) và nhập/xuất sao lưu comment từ file JSON.</li>
+        <li><strong>Kích hoạt mật khẩu:</strong> Nhập mật khẩu một lần ở màn hình đầu tiên để mở khóa tính năng.</li>
       </ul>
     </div>
   </div>

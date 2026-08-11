@@ -8,7 +8,8 @@
     "tabs",
     "storage",
     "unlimitedStorage",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "*://*.facebook.com/*",
@@ -20,8 +21,10 @@
     "https://generativelanguage.googleapis.com/*"
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_title": "PhucTran auto comment"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   },
   "content_scripts": [
     {
