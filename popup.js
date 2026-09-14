@@ -503,10 +503,43 @@ function generateFolderId() {
   return `folder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+const DEFAULT_PRESET_FOLDERS = [
+  'Phú Nhuận trên 8tr',
+  'Phú Nhuận dưới 8',
+  'Bình Thạnh trên 8',
+  'Bình Thạnh dưới 8',
+  'Phú Nhuận 2 phòng ngủ',
+  'Bình Thạnh 2 phòng ngủ',
+  'Quận 3 trên 8',
+  'Quận 3 dưới 8',
+  'Quận 3 2pn',
+  'Quận 1 trên 8',
+  'Quận 1 dưới 8',
+  'Quận 1 2pn',
+  'Thủ Đức 2pn',
+  'Thủ Đức trên 8',
+  'Thủ Đức dưới 8',
+  'Gò Vấp trên 8',
+  'Gò Vấp dưới 8',
+  'Gò Vấp 2 pn',
+  'Quận 10 trên 8',
+  'Quận 10 dưới 8',
+  'Quận 10 2pn'
+];
+
 async function getFolders() {
   return new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEY_FOLDERS], (result) => {
-      const stored = Array.isArray(result[STORAGE_KEY_FOLDERS]) ? result[STORAGE_KEY_FOLDERS] : [];
+      let stored = Array.isArray(result[STORAGE_KEY_FOLDERS]) ? result[STORAGE_KEY_FOLDERS] : [];
+      if (stored.length === 0) {
+        stored = DEFAULT_PRESET_FOLDERS.map((name, index) => ({
+          id: `preset_folder_${index + 1}`,
+          name,
+          createdAt: new Date().toISOString()
+        }));
+        chrome.storage.local.set({ [STORAGE_KEY_FOLDERS]: stored });
+      }
+      folders = stored;
       resolve(stored);
     });
   });
@@ -522,6 +555,8 @@ async function saveFolders(nextFolders) {
 async function renderFolderSection() {
   const folderListEl = document.getElementById('folderList');
   if (!folderListEl) return;
+
+  renderRoomFolderOptions();
 
   folderListEl.innerHTML = '';
 
@@ -2866,6 +2901,627 @@ document.getElementById('nextBtn').addEventListener('click', () => {
   sendCurrentCommentMenu1();
 });
 
+// #region Room Extractor & AI Parsing Logic
+function parsePriceToHashtag(priceRaw) {
+  if (!priceRaw) return '';
+
+  let text = priceRaw.replace(/💸|đ|VNĐ|vnd|VND/g, '').trim();
+
+  const existingHash = text.match(/#(\d+\s*tr\s*\d*)/i);
+  if (existingHash) return `#${existingHash[1].replace(/\s+/g, '')}`;
+
+  const trMatch = text.match(/(\d+)\s*tr\s*(\d*)/i);
+  if (trMatch) {
+    const main = trMatch[1];
+    const sub = trMatch[2];
+    return sub ? `#${main}tr${sub}` : `#${main}tr`;
+  }
+
+  const cleanDigits = text.replace(/[^\d]/g, '');
+  if (!cleanDigits) return '';
+
+  const num = parseInt(cleanDigits, 10);
+  if (isNaN(num)) return '';
+
+  if (num >= 100000) {
+    const million = num / 1000000;
+    const whole = Math.floor(million);
+    const decimal = Math.round((million - whole) * 10);
+
+    if (decimal > 0) {
+      return `#${whole}tr${decimal}`;
+    } else {
+      return `#${whole}tr`;
+    }
+  } else if (num < 100) {
+    return `#${num}tr`;
+  }
+
+  return '';
+}
+
+function parseVietnameseAddress(addressRaw) {
+  if (!addressRaw) return '';
+
+  let str = addressRaw.trim();
+
+  // Strip room/code suffix like "- A666C", "/ A666C", " - Mã..."
+  str = str.replace(/\s*[-/]\s*[A-Z0-9]{3,}$/i, '');
+
+  const districtMap = [
+    { regex: /\b(PN|Phú Nhuận)\b/i, name: 'Phú Nhuận' },
+    { regex: /\b(TB|Tân Bình)\b/i, name: 'Tân Bình' },
+    { regex: /\b(BT|Bình Thạnh)\b/i, name: 'Bình Thạnh' },
+    { regex: /\b(TĐ|TPTĐ|Thủ Đức)\b/i, name: 'Thủ Đức' },
+    { regex: /\b(GV|Gò Vấp)\b/i, name: 'Gò Vấp' },
+    { regex: /\b(TP|Tân Phú)\b/i, name: 'Tân Phú' },
+    { regex: /\b(BTP|Bình Tân)\b/i, name: 'Bình Tân' },
+    { regex: /\b(NB|Nhà Bè)\b/i, name: 'Nhà Bè' },
+    { regex: /\b(BC|Bình Chánh)\b/i, name: 'Bình Chánh' },
+    { regex: /\b(HM|Hóc Môn)\b/i, name: 'Hóc Môn' },
+    { regex: /\b(Q\.?\s*0?1|Quận\s*0?1)\b/i, name: 'Quận 1' },
+    { regex: /\b(Q\.?\s*0?2|Quận\s*0?2)\b/i, name: 'Quận 2' },
+    { regex: /\b(Q\.?\s*0?3|Quận\s*0?3)\b/i, name: 'Quận 3' },
+    { regex: /\b(Q\.?\s*0?4|Quận\s*0?4)\b/i, name: 'Quận 4' },
+    { regex: /\b(Q\.?\s*0?5|Quận\s*0?5)\b/i, name: 'Quận 5' },
+    { regex: /\b(Q\.?\s*0?6|Quận\s*0?6)\b/i, name: 'Quận 6' },
+    { regex: /\b(Q\.?\s*0?7|Quận\s*0?7)\b/i, name: 'Quận 7' },
+    { regex: /\b(Q\.?\s*0?8|Quận\s*0?8)\b/i, name: 'Quận 8' },
+    { regex: /\b(Q\.?\s*0?9|Quận\s*0?9)\b/i, name: 'Quận 9' },
+    { regex: /\b(Q\.?\s*10|Quận\s*10)\b/i, name: 'Quận 10' },
+    { regex: /\b(Q\.?\s*11|Quận\s*11)\b/i, name: 'Quận 11' },
+    { regex: /\b(Q\.?\s*12|Quận\s*12)\b/i, name: 'Quận 12' }
+  ];
+
+  let detectedDistrict = '';
+  for (const item of districtMap) {
+    if (item.regex.test(str)) {
+      detectedDistrict = item.name;
+      break;
+    }
+  }
+
+  let streetName = str;
+  // Remove leading house/alley number e.g. "298/14 ", "123A ", "Hẻm 298 "
+  streetName = streetName.replace(/^(?:Hẻm\s+)?\d+[\d/a-zA-Z-]*\s+/, '');
+
+  // Remove district part from street name
+  for (const item of districtMap) {
+    streetName = streetName.replace(item.regex, '');
+  }
+
+  // Clean trailing punctuation
+  streetName = streetName.replace(/^[,.\s-]+|[,.\s-]+$/g, '').trim();
+
+  if (streetName && detectedDistrict) {
+    return `${streetName}, ${detectedDistrict}`;
+  } else if (streetName) {
+    return streetName;
+  } else if (detectedDistrict) {
+    return detectedDistrict;
+  }
+
+  return addressRaw;
+}
+
+function parseFurnitureText(furnitureRaw) {
+  if (!furnitureRaw) return 'FULL nội thất';
+
+  let clean = furnitureRaw.replace(/^[^\w\s]*\s*(?:Nội thất\s*:\s*)?/i, '').trim();
+  clean = clean.replace(/^Nội thất\s*:\s*/i, '').trim();
+
+  if (!clean || clean.toLowerCase() === 'full nội thất') {
+    return 'FULL nội thất';
+  }
+
+  return `${clean} + FULL nội thất`;
+}
+
+async function parseRoomWithGeminiAPI(raw, apiKey) {
+  const prompt = `Xử lý thông tin phòng trọ:
+- "cleanAddress": Rút gọn địa chỉ thành chỉ "Tên đường, Tên quận". Ví dụ: "298/14 Nguyễn Thượng Hiền, PN - A666C" -> "Nguyễn Thượng Hiền, Phú Nhuận". PN=Phú Nhuận, TB=Tân Bình, BT=Bình Thạnh, Q10=Quận 10.
+- "priceHashtag": Chỉ tạo duy nhất hashtag giá như #15tr, #7tr6, #10tr8 từ số tiền (15.000.000đ -> "#15tr", 7.600.000đ -> "#7tr6"). Không ghi chữ Giá hay full số tiền.
+- "cleanFurniture": Làm sạch nội thất, trả về dạng "[Nội thất đọc được] + FULL nội thất" (ví dụ: "Máy giặt riêng + FULL nội thất").
+
+Dữ liệu thô:
+- Địa chỉ: ${raw.address || ''}
+- Giá: ${raw.price || ''}
+- Nội thất: ${raw.furnitureRaw || ''}
+
+Trả về duy nhất JSON: {"cleanAddress": "...", "priceHashtag": "...", "cleanFurniture": "..."}`;
+
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }]
+    })
+  });
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const cleanJson = text.replace(/```json|```/g, '').trim();
+  return JSON.parse(cleanJson);
+}
+
+let currentExtractedRoomImage = '';
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function parseNumericPrice(priceRaw) {
+  if (!priceRaw) return 0;
+  let text = priceRaw.replace(/💸|đ|VNĐ|vnd|VND/gi, '').trim();
+
+  const trMatch = text.match(/(\d+)\s*tr\s*(\d*)/i);
+  if (trMatch) {
+    const main = parseInt(trMatch[1], 10) || 0;
+    const sub = trMatch[2] ? parseInt(trMatch[2], 10) : 0;
+    return (main * 1000000) + (sub * 100000);
+  }
+
+  const cleanDigits = text.replace(/[^\d]/g, '');
+  if (!cleanDigits) return 0;
+  const num = parseInt(cleanDigits, 10);
+  if (isNaN(num)) return 0;
+
+  if (num < 100) {
+    return num * 1000000;
+  }
+  return num;
+}
+
+function autoMatchRoomFolder(districtName, priceRaw, roomTypeRaw, currentFolders) {
+  if (!districtName || !Array.isArray(currentFolders) || currentFolders.length === 0) {
+    return '';
+  }
+
+  const is2PN = /2\s*(?:phòng|pn)/i.test(roomTypeRaw || '');
+  const numPrice = parseNumericPrice(priceRaw);
+
+  const distKeyMap = {
+    'Phú Nhuận': 'Phú Nhuận',
+    'Bình Thạnh': 'Bình Thạnh',
+    'Quận 3': 'Quận 3',
+    'Quận 1': 'Quận 1',
+    'Thủ Đức': 'Thủ Đức',
+    'Gò Vấp': 'Gò Vấp',
+    'Quận 10': 'Quận 10'
+  };
+
+  const distKey = distKeyMap[districtName] || districtName;
+  const lowerDist = distKey.toLowerCase();
+
+  let matchedFolder = null;
+
+  if (is2PN) {
+    matchedFolder = currentFolders.find((f) => {
+      const fn = (f.name || '').toLowerCase();
+      return fn.includes(lowerDist) && (fn.includes('2pn') || fn.includes('2 phòng') || fn.includes('2 pn'));
+    });
+  } else if (numPrice >= 8000000) {
+    matchedFolder = currentFolders.find((f) => {
+      const fn = (f.name || '').toLowerCase();
+      return fn.includes(lowerDist) && fn.includes('trên 8');
+    });
+  } else if (numPrice > 0 && numPrice < 8000000) {
+    matchedFolder = currentFolders.find((f) => {
+      const fn = (f.name || '').toLowerCase();
+      return fn.includes(lowerDist) && fn.includes('dưới 8');
+    });
+  }
+
+  return matchedFolder ? matchedFolder.id : '';
+}
+
+async function getActivePageTab() {
+  let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (tabs && tabs[0] && tabs[0].id) return tabs[0];
+
+  tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tabs && tabs[0] && tabs[0].id) return tabs[0];
+
+  tabs = await chrome.tabs.query({ active: true });
+  return (tabs && tabs[0]) || null;
+}
+
+async function extractRoomInfoFromActiveTab(xpathMap) {
+  const activeTab = await getActivePageTab();
+  if (!activeTab || !activeTab.id) {
+    throw new Error('Không tìm thấy tab đang mở trên trình duyệt.');
+  }
+
+  const response = await chrome.scripting.executeScript({
+    target: { tabId: activeTab.id },
+    func: (xpaths) => {
+      function getByXPath(xpath, attr = 'textContent') {
+        if (!xpath || typeof xpath !== 'string') return '';
+        try {
+          const result = document.evaluate(
+            xpath.trim(),
+            document,
+            null,
+            XPathResult.FIRST_ORDERED_NODE_TYPE,
+            null
+          );
+          const node = result.singleNodeValue;
+          if (!node) return '';
+          if (attr === 'src') {
+            return node.src || node.getAttribute('src') || node.dataset?.src || '';
+          }
+          return (node.textContent || '').trim();
+        } catch (e) {
+          console.error('[RoomExtractor] Error evaluating XPath:', xpath, e);
+          return '';
+        }
+      }
+
+      let price = getByXPath(xpaths.price, 'textContent');
+      let address = getByXPath(xpaths.address, 'textContent');
+      let furnitureRaw = getByXPath(xpaths.furniture, 'textContent');
+      let utilities = getByXPath(xpaths.utilities, 'textContent');
+      let imageSrc = getByXPath(xpaths.image, 'src');
+      let roomTypeRaw = getByXPath(xpaths.roomType, 'textContent');
+
+      // Smart Fallback for Address
+      if (!address) {
+        const h1 = document.querySelector('#app h1, main h1, h1, #app h2, header h1');
+        if (h1 && h1.textContent.trim()) {
+          address = h1.textContent.trim();
+        }
+      }
+
+      // Smart Fallback for Price
+      if (!price) {
+        const allNodes = Array.from(document.querySelectorAll('#app p, #app div, #app span, #app h2, #app h3'));
+        for (const el of allNodes) {
+          const text = el.textContent.trim();
+          if (/(?:💸|\b\d{1,3}(?:\.\d{3})+\s*đ|\b\d+(?:\.\d+)?\s*tr\b)/i.test(text) && text.length < 50) {
+            price = text;
+            break;
+          }
+        }
+      }
+
+      // Smart Fallback for Furniture
+      if (!furnitureRaw) {
+        const allNodes = Array.from(document.querySelectorAll('#app p, #app div, #app li, #app span'));
+        for (const el of allNodes) {
+          const text = el.textContent.trim();
+          if (/Nội thất/i.test(text) && text.length < 80 && el.children.length === 0) {
+            furnitureRaw = text;
+            break;
+          }
+        }
+      }
+
+      // Smart Fallback for Utilities
+      if (!utilities) {
+        const allNodes = Array.from(document.querySelectorAll('#app p, #app div, #app li, #app span'));
+        let foundHeader = false;
+        for (const el of allNodes) {
+          const text = el.textContent.trim();
+          if (/Tiện ích/i.test(text)) {
+            foundHeader = true;
+            continue;
+          }
+          if (foundHeader && text && text.length < 100) {
+            utilities = text;
+            break;
+          }
+        }
+      }
+
+      // Smart Fallback for Image
+      if (!imageSrc) {
+        const img = document.querySelector('#app img, main img, article img, img[src*="http"]');
+        if (img) {
+          imageSrc = img.src || img.getAttribute('src') || img.dataset?.src || '';
+        }
+      }
+
+      // Smart Fallback for Room Type filter
+      if (!roomTypeRaw) {
+        const btn3 = document.querySelector('#app button:nth-of-type(3), main button:nth-of-type(3)');
+        if (btn3 && btn3.textContent.trim()) {
+          roomTypeRaw = btn3.textContent.trim();
+        }
+      }
+
+      return {
+        price,
+        address,
+        furnitureRaw,
+        utilities,
+        imageSrc,
+        roomTypeRaw,
+        url: window.location.href,
+        title: document.title
+      };
+    },
+    args: [xpathMap]
+  });
+
+  if (response && response[0] && response[0].result) {
+    return response[0].result;
+  }
+  return null;
+}
+
+async function formatRoomCommentText({ price, address, furnitureRaw, utilities }, geminiApiKey = '') {
+  const lines = [];
+  let cleanAddress = '';
+  let hashtagPrice = '';
+  let cleanFurniture = '';
+
+  if (geminiApiKey && geminiApiKey.trim()) {
+    try {
+      const aiResult = await parseRoomWithGeminiAPI({ price, address, furnitureRaw, utilities }, geminiApiKey.trim());
+      if (aiResult) {
+        cleanAddress = aiResult.cleanAddress || '';
+        hashtagPrice = aiResult.priceHashtag || '';
+        cleanFurniture = aiResult.cleanFurniture || '';
+      }
+    } catch (e) {
+      console.warn('[Gemini AI] Call failed, using local parser:', e);
+    }
+  }
+
+  if (!cleanAddress) {
+    cleanAddress = parseVietnameseAddress(address);
+  }
+
+  if (!hashtagPrice) {
+    hashtagPrice = parsePriceToHashtag(price);
+  }
+
+  if (!cleanFurniture) {
+    cleanFurniture = parseFurnitureText(furnitureRaw);
+  }
+
+  if (hashtagPrice) {
+    lines.push(hashtagPrice);
+  } else if (price) {
+    const rawPriceClean = price.replace(/💸/g, '').trim();
+    lines.push(`#${rawPriceClean}`);
+  }
+
+  if (cleanAddress) {
+    lines.push(`Địa chỉ: ${cleanAddress}`);
+  } else {
+    lines.push(`Địa chỉ: (Không đọc được)`);
+  }
+
+  lines.push(`Nội thất: ${cleanFurniture}`);
+
+  if (utilities) {
+    lines.push(`Tiện ích: ${utilities}`);
+  } else {
+    lines.push(`Tiện ích: (Không đọc được)`);
+  }
+
+  return lines.join('\n');
+}
+
+async function renderRoomFolderOptions() {
+  const roomFolderSelect = document.getElementById('roomFolderSelect');
+  if (!roomFolderSelect) return;
+
+  const currentFolders = await getFolders();
+  const selectedVal = roomFolderSelect.value;
+
+  let html = '<option value="">(Không chọn thư mục - Chưa phân loại)</option>';
+  currentFolders.forEach((f) => {
+    html += `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`;
+  });
+
+  roomFolderSelect.innerHTML = html;
+  if (selectedVal && currentFolders.some((f) => f.id === selectedVal)) {
+    roomFolderSelect.value = selectedVal;
+  }
+}
+
+let autoExtractTimer = null;
+
+async function performAutoRoomExtract() {
+  const roomCommentText = document.getElementById('roomCommentText');
+  const roomExtractedResultBox = document.getElementById('roomExtractedResultBox');
+  const roomExtractStatus = document.getElementById('roomExtractStatus');
+  const extractRoomBtn = document.getElementById('extractRoomBtn');
+  const roomImagePreviewContainer = document.getElementById('roomImagePreviewContainer');
+  const roomImagePreview = document.getElementById('roomImagePreview');
+
+  const xpathPrice = document.getElementById('xpathPrice')?.value || '';
+  const xpathAddress = document.getElementById('xpathAddress')?.value || '';
+  const xpathFurniture = document.getElementById('xpathFurniture')?.value || '';
+  const xpathUtilities = document.getElementById('xpathUtilities')?.value || '';
+  const xpathImage = document.getElementById('xpathImage')?.value || '';
+  const xpathRoomType = document.getElementById('xpathRoomType')?.value || '';
+  const geminiApiKey = document.getElementById('geminiApiKeyInput')?.value || '';
+
+  if (roomExtractStatus) {
+    roomExtractStatus.textContent = '⚡ Đang tự động đọc dữ liệu phòng...';
+    roomExtractStatus.style.color = '#7c305c';
+  }
+
+  try {
+    const roomData = await extractRoomInfoFromActiveTab({
+      price: xpathPrice,
+      address: xpathAddress,
+      furniture: xpathFurniture,
+      utilities: xpathUtilities,
+      image: xpathImage,
+      roomType: xpathRoomType
+    });
+
+    if (!roomData || (!roomData.price && !roomData.address && !roomData.furnitureRaw)) {
+      if (roomExtractStatus) {
+        roomExtractStatus.textContent = 'ℹ Tab hiện tại không thấy dữ liệu phòng. Hãy mở tab chi tiết phòng.';
+      }
+      return;
+    }
+
+    const commentString = await formatRoomCommentText(roomData, geminiApiKey);
+
+    if (roomCommentText) {
+      roomCommentText.value = commentString;
+    }
+
+    // Handle Image Preview
+    if (roomData.imageSrc && roomData.imageSrc.trim()) {
+      currentExtractedRoomImage = roomData.imageSrc.trim();
+      if (roomImagePreview) roomImagePreview.src = currentExtractedRoomImage;
+      if (roomImagePreviewContainer) roomImagePreviewContainer.classList.remove('is-hidden');
+    } else {
+      currentExtractedRoomImage = '';
+      if (roomImagePreviewContainer) roomImagePreviewContainer.classList.add('is-hidden');
+    }
+
+    await renderRoomFolderOptions();
+
+    // Auto Match Folder
+    const cleanAddress = parseVietnameseAddress(roomData.address);
+    let detectedDistrict = '';
+    const knownDistricts = ['Phú Nhuận', 'Bình Thạnh', 'Quận 3', 'Quận 1', 'Thủ Đức', 'Gò Vấp', 'Quận 10'];
+    for (const d of knownDistricts) {
+      if (cleanAddress.toLowerCase().includes(d.toLowerCase())) {
+        detectedDistrict = d;
+        break;
+      }
+    }
+
+    const currentFolders = await getFolders();
+    const matchedFolderId = autoMatchRoomFolder(detectedDistrict, roomData.price, roomData.roomTypeRaw, currentFolders);
+    if (matchedFolderId) {
+      const roomFolderSelect = document.getElementById('roomFolderSelect');
+      if (roomFolderSelect) {
+        roomFolderSelect.value = matchedFolderId;
+      }
+    }
+
+    if (roomExtractedResultBox) {
+      roomExtractedResultBox.classList.remove('is-hidden');
+    }
+
+    const folderObj = currentFolders.find((f) => f.id === matchedFolderId);
+    const matchedName = folderObj ? folderObj.name : 'Chưa phân loại';
+
+    if (roomExtractStatus) {
+      roomExtractStatus.textContent = `✨ Đã tự động phân loại vào thư mục "${matchedName}"!${currentExtractedRoomImage ? ' (Kèm 1 ảnh)' : ''}`;
+      roomExtractStatus.style.color = '#1b5e20';
+    }
+  } catch (err) {
+    console.error('[AutoExtract] Error:', err);
+    if (roomExtractStatus) {
+      roomExtractStatus.textContent = `ℹ ${err.message || 'Mở tab chi tiết phòng rồi nhấn Đọc lại.'}`;
+      roomExtractStatus.style.color = '#7c305c';
+    }
+  }
+}
+
+function initializeRoomExtractorMenu() {
+  const toggleXPathConfigBtn = document.getElementById('toggleXPathConfigBtn');
+  const xpathConfigBox = document.getElementById('xpathConfigBox');
+  const extractRoomBtn = document.getElementById('extractRoomBtn');
+  const roomExtractedResultBox = document.getElementById('roomExtractedResultBox');
+  const roomCommentText = document.getElementById('roomCommentText');
+  const roomFolderSelect = document.getElementById('roomFolderSelect');
+  const addRoomCommentBtn = document.getElementById('addRoomCommentBtn');
+  const roomExtractStatus = document.getElementById('roomExtractStatus');
+  const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
+
+  // Load saved Gemini API Key (Default preset)
+  const DEFAULT_GEMINI_KEY = 'AIzaSyBYGsY2uvXNjpNDzLmI_DdJb_RvcjJzqRw';
+  if (geminiApiKeyInput) {
+    chrome.storage.local.get(['geminiApiKey'], (res) => {
+      const activeKey = res.geminiApiKey || DEFAULT_GEMINI_KEY;
+      geminiApiKeyInput.value = activeKey;
+      if (!res.geminiApiKey) {
+        chrome.storage.local.set({ geminiApiKey: DEFAULT_GEMINI_KEY });
+      }
+    });
+    geminiApiKeyInput.addEventListener('change', () => {
+      chrome.storage.local.set({ geminiApiKey: geminiApiKeyInput.value.trim() || DEFAULT_GEMINI_KEY });
+    });
+  }
+
+  function setRoomStatus(msg, isError = false) {
+    if (roomExtractStatus) {
+      roomExtractStatus.textContent = msg;
+      roomExtractStatus.style.color = isError ? '#b42318' : '#7c305c';
+    }
+  }
+
+  if (toggleXPathConfigBtn && xpathConfigBox) {
+    toggleXPathConfigBtn.addEventListener('click', () => {
+      xpathConfigBox.classList.toggle('is-hidden');
+    });
+  }
+
+  if (extractRoomBtn) {
+    extractRoomBtn.addEventListener('click', async () => {
+      extractRoomBtn.disabled = true;
+      await performAutoRoomExtract();
+      extractRoomBtn.disabled = false;
+    });
+  }
+
+  if (addRoomCommentBtn) {
+    addRoomCommentBtn.addEventListener('click', async () => {
+      const text = (roomCommentText?.value || '').trim();
+      if (!text) {
+        setRoomStatus('❌ Nội dung comment phòng rỗng, không thể thêm.', true);
+        return;
+      }
+
+      const selectedFolderId = roomFolderSelect?.value || '';
+      const folderIds = selectedFolderId ? [selectedFolderId] : [];
+      const imagesToSave = currentExtractedRoomImage ? [currentExtractedRoomImage] : [];
+
+      addRoomCommentBtn.disabled = true;
+      try {
+        await addClipboardItem(text, imagesToSave, folderIds);
+        await renderClipboardList();
+        await renderFolderSection();
+
+        const folderObj = folders.find((f) => f.id === selectedFolderId);
+        const folderName = folderObj ? folderObj.name : 'Chưa phân loại (Không chọn thư mục)';
+
+        setRoomStatus(`🎉 Đã tự động thêm comment phòng vào danh sách! (Thư mục: ${folderName}${imagesToSave.length ? ' - Kèm 1 ảnh' : ''})`);
+      } catch (err) {
+        setRoomStatus(`❌ Không thêm được comment: ${err.message}`, true);
+      } finally {
+        addRoomCommentBtn.disabled = false;
+      }
+    });
+  }
+
+  // Trigger auto extract immediately on load
+  performAutoRoomExtract();
+
+  // Listen to tab changes to auto extract when user switches tab
+  chrome.tabs.onActivated.addListener(() => {
+    if (autoExtractTimer) clearTimeout(autoExtractTimer);
+    autoExtractTimer = setTimeout(performAutoRoomExtract, 500);
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete' && tab.active) {
+      if (autoExtractTimer) clearTimeout(autoExtractTimer);
+      autoExtractTimer = setTimeout(performAutoRoomExtract, 500);
+    }
+  });
+}
+// #endregion
+
 const STORAGE_KEY_FORM_DATA = 'formData';
 
 function initializeApp() {
@@ -2881,6 +3537,7 @@ function initializeApp() {
   initializeClipboardImagePicker();
   initializeClipboardMenu();
   initializeFoldersMenu();
+  initializeRoomExtractorMenu();
 }
 
 function saveFormData() {

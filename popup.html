@@ -755,7 +755,54 @@
           </div>
         </div>
 
-        <button id="startClipboardBtn" type="button">Bắt đầu chạy</button>
+        <div class="room-extractor-panel" style="margin-top: 12px; margin-bottom: 12px; padding: 12px; background: linear-gradient(180deg, #fff7fc 0%, #fff0f7 100%); border: 1px solid #f4c5df; border-radius: 12px;">
+          <div style="font-size: 13px; font-weight: 700; color: #8d1459; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+            <span>🏠 Tự động đọc phòng (Room Detail + AI)</span>
+            <button id="toggleXPathConfigBtn" type="button" style="width: auto; margin-bottom: 0; padding: 3px 8px; font-size: 10px; background: #b16995;">⚙ Cấu hình & AI</button>
+          </div>
+          <div class="mini-hint" style="margin-bottom: 8px;">Extension tự động đọc dữ liệu phòng khi bạn mở tab chi tiết phòng. AI sẽ rút gọn địa chỉ (Đường + Quận) và thêm hashtag giá (#10tr, #7tr6).</div>
+
+          <div id="xpathConfigBox" class="is-hidden" style="margin-bottom: 10px; padding: 8px; background: #fff; border: 1px solid #f4c5df; border-radius: 8px; font-size: 11px;">
+            <div style="font-weight: bold; color: #7c305c; margin-bottom: 4px;">Cấu hình XPath & AI API Key (Tùy chọn):</div>
+            <label style="display: block; margin-bottom: 2px;">Gemini API Key (Tùy chọn AI nâng cao):</label>
+            <input type="password" id="geminiApiKeyInput" placeholder="Dán Gemini API Key nếu muốn gọi AI Gemini..." style="font-size: 11px; padding: 4px 6px; margin-bottom: 6px; height: 26px;">
+            <label style="display: block; margin-bottom: 2px;">XPath Giá:</label>
+            <input type="text" id="xpathPrice" value='//*[@id="app"]/div/div/div[2]/div/div[2]/p[1]' style="font-size: 11px; padding: 4px 6px; margin-bottom: 6px; height: 26px;">
+            <label style="display: block; margin-bottom: 2px;">XPath Địa chỉ:</label>
+            <input type="text" id="xpathAddress" value='//*[@id="app"]/div/div/div[2]/div/div[2]/h1' style="font-size: 11px; padding: 4px 6px; margin-bottom: 6px; height: 26px;">
+            <label style="display: block; margin-bottom: 2px;">XPath Nội thất:</label>
+            <input type="text" id="xpathFurniture" value='//*[@id="app"]/div/div/div[2]/div/div[2]/p[3]' style="font-size: 11px; padding: 4px 6px; margin-bottom: 6px; height: 26px;">
+            <label style="display: block; margin-bottom: 2px;">XPath Tiện ích:</label>
+            <input type="text" id="xpathUtilities" value='//*[@id="app"]/div/div/div[2]/div/div[2]/div[5]/p[2]' style="font-size: 11px; padding: 4px 6px; margin-bottom: 6px; height: 26px;">
+            <label style="display: block; margin-bottom: 2px;">XPath Ảnh 1:</label>
+            <input type="text" id="xpathImage" value='//*[@id="app"]/div/div/div[2]/div/div[1]/div[1]/div[1]/img' style="font-size: 11px; padding: 4px 6px; margin-bottom: 6px; height: 26px;">
+            <label style="display: block; margin-bottom: 2px;">XPath Loại phòng (Filter 2PN):</label>
+            <input type="text" id="xpathRoomType" value='//*[@id="app"]/div/div/main/div/div[1]/div[3]/button[3]' style="font-size: 11px; padding: 4px 6px; margin-bottom: 0; height: 26px;">
+          </div>
+
+          <button id="extractRoomBtn" type="button" style="margin-bottom: 0; background: linear-gradient(180deg, #ef4ba5 0%, #d52e8a 100%);">🔄 Đọc lại thông tin phòng</button>
+
+          <div id="roomExtractedResultBox" style="margin-top: 10px;">
+            <div style="font-size: 11px; font-weight: bold; color: #7c305c; margin-bottom: 4px;">Nội dung comment phòng tạo từ dữ liệu:</div>
+            <textarea id="roomCommentText" rows="4" style="width: 100%; font-size: 12px; margin-bottom: 8px;" placeholder="Nội dung comment phòng..."></textarea>
+            
+            <div id="roomImagePreviewContainer" class="is-hidden" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px; background: white; padding: 6px; border: 1px solid #f4c5df; border-radius: 8px;">
+              <img id="roomImagePreview" src="" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd;">
+              <span style="font-size: 11px; color: #7c305c; font-weight: bold;">🖼 Đã bóc tách 1 ảnh phòng đính kèm</span>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;">
+              <label style="font-size: 11px; font-weight: bold; color: #7c305c;">Chọn thư mục lưu (Tùy chọn):</label>
+              <select id="roomFolderSelect" style="width: 100%; height: 30px; font-size: 11px; padding: 0 6px; border: 1px solid #f4c5df; border-radius: 6px; background: white;">
+                <option value="">(Không chọn thư mục - Chưa phân loại)</option>
+              </select>
+            </div>
+
+            <button id="addRoomCommentBtn" type="button" style="margin-bottom: 0; background: linear-gradient(180deg, #388e3c 0%, #2e7d32 100%);">➕ Thêm vào danh sách Comment</button>
+          </div>
+
+          <div id="roomExtractStatus" class="hint" style="margin-top: 6px; font-size: 11px;"></div>
+        </div>
 
         <div class="folder-section">
           <div class="folder-title">Thư mục comment</div>
@@ -864,6 +911,7 @@
       <div class="section-title">Hướng dẫn sử dụng</div>
       <ul class="guide-list">
         <li><strong>Số comment trên post đang mở:</strong> Số lượng comment khác nhau lấy từ clipboard để điền trên bài viết đang mở.</li>
+        <li><strong>Đọc thông tin phòng (Room Detail):</strong> Mở trang chi tiết phòng trên trang web bất kỳ, bấm "Đọc dữ liệu phòng" để đọc Giá, Địa chỉ, Nội thất (Full nội thất + ...), Tiện ích qua XPath và tự động tạo comment. Bạn có thể chọn thư mục lưu hoặc lưu dạng Chưa phân loại.</li>
         <li><strong>Nút Bắt đầu chạy:</strong> Bắt đầu điền comment tự động vào bài viết đang mở.</li>
         <li><strong>Tìm kiếm comment:</strong> Lọc danh sách comment đã lưu theo từ khóa.</li>
         <li><strong>Thư mục comment:</strong> Tạo các nhóm comment riêng (ví dụ: "Dưới 3.5tr"). Khi click chọn một thư mục, extension sẽ tự động lọc danh sách và chọn tất cả comment trong thư mục đó để chạy lần lượt.</li>
