@@ -744,7 +744,16 @@
         <div class="section-title">Cấu hình tự động comment từ Clipboard</div>
         <div class="mini-hint">Mở đúng bài viết Facebook cần comment rồi bấm Bắt đầu chạy.</div>
 
-        <input type="number" id="clipboardCommentsPerPost" placeholder="Số comment cần điền trên post đang mở" min="1" max="200">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <div>
+            <label style="font-size: 11px; color: #7c305c; font-weight: bold; display: block; margin-bottom: 4px;">Số cmt / post:</label>
+            <input type="number" id="clipboardCommentsPerPost" placeholder="Số cmt" min="1" max="200" style="margin-bottom: 0;">
+          </div>
+          <div>
+            <label style="font-size: 11px; color: #7c305c; font-weight: bold; display: block; margin-bottom: 4px;">Độ trễ chờ (giây):</label>
+            <input type="number" id="clipboardCommentDelay" placeholder="Ví dụ: 3" min="1" max="60" value="3" style="margin-bottom: 0;">
+          </div>
+        </div>
 
         <button id="startClipboardBtn" type="button">Bắt đầu chạy</button>
 

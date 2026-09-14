@@ -354,6 +354,13 @@ function getClipboardCount() {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function getCommentDelayMs() {
+  const delayInput = document.getElementById('clipboardCommentDelay');
+  const value = Number.parseFloat(delayInput?.value);
+  const seconds = Number.isFinite(value) && value >= 1 ? value : 3;
+  return seconds * 1000;
+}
+
 function createRunState({ targetPosts, commentsPerPost, commentPayloadSet, targetPostUrl }) {
   return {
     active: true,
@@ -806,7 +813,41 @@ async function getClipboardItems() {
   return new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEY_CLIPBOARD], (result) => {
       const items = Array.isArray(result[STORAGE_KEY_CLIPBOARD]) ? result[STORAGE_KEY_CLIPBOARD] : [];
-      resolve(items);
+      
+      let changed = false;
+      const uniqueItems = [];
+      const seenTexts = new Set();
+
+      for (const item of items) {
+        if (!item || typeof item.text !== 'string') continue;
+        const normalizedText = item.text.trim();
+        if (seenTexts.has(normalizedText)) {
+          changed = true;
+          // Merge folder IDs and image URLs
+          const existingItem = uniqueItems.find(x => x.text.trim() === normalizedText);
+          if (existingItem) {
+            const existingFolderIds = Array.isArray(existingItem.folderIds) ? existingItem.folderIds : (existingItem.folderId ? [existingItem.folderId] : []);
+            const itemFolderIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+            existingItem.folderIds = Array.from(new Set([...existingFolderIds, ...itemFolderIds]));
+            existingItem.folderId = '';
+
+            const existingImages = Array.isArray(existingItem.imageDataUrls) ? existingItem.imageDataUrls : [];
+            const itemImages = Array.isArray(item.imageDataUrls) ? item.imageDataUrls : [];
+            existingItem.imageDataUrls = Array.from(new Set([...existingImages, ...itemImages])).slice(0, MAX_CLIPBOARD_IMAGES_PER_ITEM);
+          }
+          continue;
+        }
+        seenTexts.add(normalizedText);
+        uniqueItems.push(item);
+      }
+
+      if (changed) {
+        chrome.storage.local.set({ [STORAGE_KEY_CLIPBOARD]: uniqueItems }, () => {
+          resolve(uniqueItems);
+        });
+      } else {
+        resolve(items);
+      }
     });
   });
 }
@@ -885,9 +926,14 @@ function normalizeImportedClipboardItems(sourceItems) {
     }
 
     const existing = deduped[existingIndex];
+    const mergedFolderIds = Array.from(new Set([
+      ...(Array.isArray(existing.folderIds) ? existing.folderIds : []),
+      ...(Array.isArray(normalized.folderIds) ? normalized.folderIds : [])
+    ]));
     deduped[existingIndex] = {
       ...existing,
       ...normalized,
+      folderIds: mergedFolderIds,
       imageDataUrls: normalized.imageDataUrls.length ? normalized.imageDataUrls : existing.imageDataUrls,
       createdAt: existing.createdAt || normalized.createdAt,
       updatedAt: normalized.updatedAt || existing.updatedAt
@@ -2423,6 +2469,17 @@ function sendCurrentCommentMenu1(ignoreHistory = false, hasRetriedIgnoreHistory 
           return;
         }
 
+        if (response.status === 'FacebookBlocked') {
+          if (runState?.active) {
+            finishRun(`Dừng batch: ${response.message || 'Bị Facebook chặn/hạn chế bình luận.'}`);
+            return;
+          }
+
+          document.getElementById('status').textContent = response.message || 'Bị Facebook chặn/hạn chế bình luận.';
+          if (nextBtn) nextBtn.disabled = false;
+          return;
+        }
+
         if (response.status === 'SubmitFailed') {
           if (runState?.active) {
             finishRun('Dừng batch: submit comment thất bại.');
@@ -2495,7 +2552,7 @@ function sendCurrentCommentMenu1(ignoreHistory = false, hasRetriedIgnoreHistory 
             return;
           }
 
-          setTimeout(() => sendCurrentCommentMenu1(), 700);
+          setTimeout(() => sendCurrentCommentMenu1(), getCommentDelayMs());
         }
       }
     );
@@ -2577,6 +2634,11 @@ function sendCurrentCommentMenu2(hasRetriedConnection = false) {
           return;
         }
 
+        if (response.status === 'FacebookBlocked') {
+          finishRun(`Menu 2 dừng: ${response.message || 'Bị Facebook chặn/hạn chế bình luận.'}`);
+          return;
+        }
+
         if (response.status === 'SubmitFailed') {
           finishRun('Menu 2 đã điền nhưng chưa bấm gửi thành công.');
           return;
@@ -2615,7 +2677,7 @@ function sendCurrentCommentMenu2(hasRetriedConnection = false) {
             return;
           }
 
-          setTimeout(() => sendCurrentCommentMenu2(), 700);
+          setTimeout(() => sendCurrentCommentMenu2(), getCommentDelayMs());
         }
       }
     );
@@ -2831,7 +2893,8 @@ function saveFormData() {
     contactPhone: document.getElementById('contactPhone')?.value || '',
     numPosts: document.getElementById('numPosts')?.value || '',
     targetPostUrl: document.getElementById('targetPostUrl')?.value || '',
-    clipboardCommentsPerPost: document.getElementById('clipboardCommentsPerPost')?.value || ''
+    clipboardCommentsPerPost: document.getElementById('clipboardCommentsPerPost')?.value || '',
+    clipboardCommentDelay: document.getElementById('clipboardCommentDelay')?.value || ''
   };
 
   chrome.storage.local.set({ [STORAGE_KEY_FORM_DATA]: formData });
@@ -2843,7 +2906,7 @@ function loadFormData() {
     if (!formData) return;
 
     // Restore each field
-    const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost'];
+    const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost', 'clipboardCommentDelay'];
     for (const field of fields) {
       const el = document.getElementById(field);
       if (el && formData[field]) {
@@ -2854,7 +2917,7 @@ function loadFormData() {
 }
 
 function initializeFormAutoSave() {
-  const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost'];
+  const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost', 'clipboardCommentDelay'];
 
   for (const field of fields) {
     const el = document.getElementById(field);

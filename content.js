@@ -1,6 +1,6 @@
 // #region Core State & Utilities
 const STORAGE_KEY = 'processedPostFingerprints';
-const CONTENT_SCRIPT_VERSION = '2026-04-11-submit-verify-v2';
+const CONTENT_SCRIPT_VERSION = '2026-08-12-submit-verify-v3';
 const sessionProcessedKeys = new Set();
 
 function getStorageValue(key) {
@@ -35,6 +35,30 @@ function createSimpleHash(text) {
 function isVisible(element) {
   const rect = element.getBoundingClientRect();
   return rect.width > 24 && rect.height > 8;
+}
+
+function setElementTextViaExecCommand(element, text) {
+  if (!element) return;
+  element.focus();
+
+  try {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    document.execCommand('delete', false, null);
+    document.execCommand('insertText', false, text);
+  } catch (e) {
+    console.error('[Text Injection] execCommand failed, falling back to textContent', e);
+    element.textContent = text;
+    element.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertText',
+      data: text
+    }));
+  }
 }
 
 // #endregion
@@ -799,7 +823,7 @@ function findSubmitButtonNearComposer(composer) {
         console.log('[Submit] Direct submit rejected - banned token in:', text.slice(0, 30));
         continue;
       }
-      if (!/bình luận|binh luan|comment|trả lời|tra loi|reply/.test(text)) {
+      if (!/bình luận|binh luan|comment|trả lời|tra loi|reply|đăng|post|gửi|gui|send|submit|publish/.test(text)) {
         console.log('[Submit] Direct submit rejected - no submit keyword in:', text.slice(0, 30));
         continue;
       }
@@ -872,7 +896,7 @@ function findSubmitButtonNearComposer(composer) {
           console.log('[Submit] Icon-only candidate rejected - wrong position:', { nearRow: nearComposerRow, rightSide: onRightSide, sameForm });
           continue;
         }
-        score += 1;
+        score += 3.5;
       }
 
       console.log('[Submit] Candidate evaluated:', { text: text.slice(0, 30), score, dist: Math.round(dist), iconOnly: iconOnlyCandidate });
@@ -928,16 +952,69 @@ function isButtonDisabled(button) {
   return aria === 'true';
 }
 
+function isFacebookBlocked() {
+  const blockKeywords = [
+    'tạm thời bị chặn',
+    'bị hạn chế',
+    'thao tác quá nhanh',
+    'tiêu chuẩn cộng đồng',
+    'quay lại sau',
+    'temporarily blocked',
+    'restricted',
+    'action too fast',
+    'community standards',
+    'try again later',
+    'something went wrong',
+    'có lỗi xảy ra'
+  ];
+
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"], .uiLayer'));
+  for (const dialog of dialogs) {
+    if (!isVisible(dialog)) continue;
+    const dialogText = (dialog.textContent || '').toLowerCase();
+    if (blockKeywords.some(keyword => dialogText.includes(keyword))) {
+      console.log('[Block Check] Visible block dialog detected:', dialog.textContent);
+      return true;
+    }
+  }
+
+  const errorToasts = Array.from(document.querySelectorAll('[role="alert"], .uiToast'));
+  for (const toast of errorToasts) {
+    if (!isVisible(toast)) continue;
+    const toastText = (toast.textContent || '').toLowerCase();
+    if (blockKeywords.some(keyword => toastText.includes(keyword))) {
+      console.log('[Block Check] Visible block toast detected:', toast.textContent);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function didDraftLikelySubmit(composer, expectedText, context = {}) {
   const normalizedExpected = normalizeDraftText(expectedText || '');
   if (!normalizedExpected) return true;
 
   const { post = null, beforeOccurrenceCount = 0 } = context;
 
-  for (const waitMs of [240, 380, 560, 760, 980]) {
+  for (const waitMs of [300, 500, 800, 1200, 1800, 2500]) {
     await sleep(waitMs);
+    
+    if (isFacebookBlocked()) {
+      console.log('[Submit] Facebook block detected during wait!');
+      return false;
+    }
+
     const current = normalizeDraftText(composer?.textContent || '');
-    if (!current) return true;
+    if (!current) {
+      // Composer is empty, wait a tiny bit to check for block popups
+      await sleep(200);
+      if (isFacebookBlocked()) {
+        console.log('[Submit] Facebook block detected after composer cleared!');
+        return false;
+      }
+      return true;
+    }
 
     if (post && normalizedExpected.length >= 12) {
       const currentCount = countTextOccurrences(post, normalizedExpected);
@@ -996,7 +1073,14 @@ async function submitCommentFromComposer(composer, expectedText = '', post = nul
   }
 
   if (!skipButtonClick) {
-    const submitBtn = findSubmitButtonNearComposer(composer);
+    let submitBtn = findSubmitButtonNearComposer(composer);
+    let btnWait = 0;
+    while (submitBtn && isButtonDisabled(submitBtn) && btnWait < 15) {
+      await sleep(100);
+      submitBtn = findSubmitButtonNearComposer(composer);
+      btnWait++;
+    }
+
     if (submitBtn) {
       console.log('[Submit] Clicking button...');
       submitBtn.click();
@@ -1375,7 +1459,10 @@ async function waitForImageAttachmentToSettle(composer, timeoutMs = 7000) {
     'img[alt*="photo" i]',
     'img[alt*="ảnh" i]',
     '[aria-label*="remove photo" i]',
-    '[aria-label*="xóa ảnh" i]'
+    '[aria-label*="xóa ảnh" i]',
+    '[aria-label*="gỡ" i]',
+    '[aria-label*="xóa" i]',
+    '[aria-label*="delete" i]'
   ];
   const uploadingSelectors = [
     '[role="progressbar"]',
@@ -2212,6 +2299,13 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
     target.box.click();
     await sleep(100);
 
+    // Wait if the composer is disabled (e.g. still submitting previous comment)
+    let checks = 0;
+    while ((target.box.getAttribute('aria-disabled') === 'true' || target.box.hasAttribute('disabled')) && checks < 20) {
+      await sleep(200);
+      checks++;
+    }
+
     const imagePayload = extractImagePayloadFromComment(request.comment);
     const explicitImageUrls = Array.isArray(request.imageUrls)
       ? request.imageUrls
@@ -2222,29 +2316,19 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
     const imageUrls = explicitImageUrls.length ? explicitImageUrls : imagePayload.imageUrls;
 
     // Clear existing text and set new comment
-    target.box.textContent = '';
-    await sleep(50);
-
-    target.box.textContent = finalCommentText;
-    target.box.dispatchEvent(new InputEvent('input', {
-      bubbles: true,
-      inputType: 'insertText',
-      data: finalCommentText
-    }));
+    setElementTextViaExecCommand(target.box, finalCommentText);
 
     const attachmentResult = await attachImagesToComposer(target.box, imageUrls);
 
     if (imageUrls.length > 0 && attachmentResult.attached === 0) {
-      const fallbackImageText = `Hình ảnh: ${imageUrls.join(', ')}`;
-      finalCommentText = finalCommentText
-        ? `${finalCommentText} - ${fallbackImageText}`
-        : fallbackImageText;
-      target.box.textContent = finalCommentText;
-      target.box.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: finalCommentText
-      }));
+      const nonDataUrls = imageUrls.filter((url) => !/^data:/i.test(url));
+      if (nonDataUrls.length > 0) {
+        const fallbackImageText = `Hình ảnh: ${nonDataUrls.join(', ')}`;
+        finalCommentText = finalCommentText
+          ? `${finalCommentText} - ${fallbackImageText}`
+          : fallbackImageText;
+        setElementTextViaExecCommand(target.box, finalCommentText);
+      }
     }
 
     // Menu 2 should submit as soon as the draft is populated.
@@ -2259,7 +2343,11 @@ window.__fbAutoCommentOnMessageHandler = (request, sender, sendResponse) => {
       ? await submitCommentFromComposerViaEnter(target.box, finalCommentText, target.post)
       : await submitCommentFromComposer(target.box, finalCommentText, target.post);
     if (!didSubmit) {
-      sendResponse({ status: 'SubmitFailed' });
+      if (isFacebookBlocked()) {
+        sendResponse({ status: 'FacebookBlocked', message: 'Tài khoản có dấu hiệu bị Facebook chặn/hạn chế tính năng bình luận (do thao tác quá nhanh hoặc spam).' });
+      } else {
+        sendResponse({ status: 'SubmitFailed' });
+      }
       return;
     }
 
