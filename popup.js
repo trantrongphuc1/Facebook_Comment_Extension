@@ -524,21 +524,37 @@ const DEFAULT_PRESET_FOLDERS = [
   'Gò Vấp 2 pn',
   'Quận 10 trên 8',
   'Quận 10 dưới 8',
-  'Quận 10 2pn'
+  'Quận 10 2pn',
+  'Tân Bình trên 8tr',
+  'Tân Bình dưới 8',
+  'Tân Bình 2pn',
+  'Tân Phú trên 8tr',
+  'Tân Phú dưới 8',
+  'Tân Phú 2pn'
 ];
 
 async function getFolders() {
   return new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEY_FOLDERS], (result) => {
       let stored = Array.isArray(result[STORAGE_KEY_FOLDERS]) ? result[STORAGE_KEY_FOLDERS] : [];
-      if (stored.length === 0) {
-        stored = DEFAULT_PRESET_FOLDERS.map((name, index) => ({
-          id: `preset_folder_${index + 1}`,
-          name,
-          createdAt: new Date().toISOString()
-        }));
+      let updated = false;
+
+      // Ensure all DEFAULT_PRESET_FOLDERS exist
+      for (const defaultName of DEFAULT_PRESET_FOLDERS) {
+        if (!stored.some((f) => f.name.trim().toLowerCase() === defaultName.trim().toLowerCase())) {
+          stored.push({
+            id: `preset_folder_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            name: defaultName,
+            createdAt: new Date().toISOString()
+          });
+          updated = true;
+        }
+      }
+
+      if (updated) {
         chrome.storage.local.set({ [STORAGE_KEY_FOLDERS]: stored });
       }
+
       folders = stored;
       resolve(stored);
     });
@@ -3094,7 +3110,9 @@ function autoMatchRoomFolder(districtName, priceRaw, roomTypeRaw, currentFolders
     'Quận 1': 'Quận 1',
     'Thủ Đức': 'Thủ Đức',
     'Gò Vấp': 'Gò Vấp',
-    'Quận 10': 'Quận 10'
+    'Quận 10': 'Quận 10',
+    'Tân Bình': 'Tân Bình',
+    'Tân Phú': 'Tân Phú'
   };
 
   const distKey = distKeyMap[districtName] || districtName;
@@ -3203,21 +3221,54 @@ async function extractRoomInfoFromActiveTab(xpathMap) {
         }
       }
 
-      // Smart Fallback for Utilities
-      if (!utilities) {
+      // Check Status element ("Còn hàng" vs "Đã cho thuê") to pick proper Utilities XPath
+      const statusText = getByXPath('//*[@id="app"]/div/div/div[2]/div/div[2]/div[1]/div', 'textContent') || (document.body ? document.body.innerText : '');
+
+      let preferredUtilitiesXPath = xpaths.utilities;
+      if (/Đã cho thuê/i.test(statusText)) {
+        preferredUtilitiesXPath = '//*[@id="app"]/div/div/div[2]/div/div[2]/div[4]/p[2]';
+      } else if (/Còn hàng/i.test(statusText)) {
+        preferredUtilitiesXPath = '//*[@id="app"]/div/div/div[2]/div/div[2]/div[5]/p[2]';
+      }
+
+      function isGarbageUtilities(str) {
+        if (!str) return true;
+        return /arrow_back|favorite_border|Chi tiết bất động sản|share/i.test(str);
+      }
+
+      utilities = getByXPath(preferredUtilitiesXPath, 'textContent');
+
+      if (isGarbageUtilities(utilities)) {
+        const altXPath = preferredUtilitiesXPath.includes('div[5]')
+          ? '//*[@id="app"]/div/div/div[2]/div/div[2]/div[4]/p[2]'
+          : '//*[@id="app"]/div/div/div[2]/div/div[2]/div[5]/p[2]';
+        const altText = getByXPath(altXPath, 'textContent');
+        if (!isGarbageUtilities(altText)) {
+          utilities = altText;
+        } else {
+          utilities = '';
+        }
+      }
+
+      // Smart Fallback for Utilities if empty or garbage
+      if (!utilities || isGarbageUtilities(utilities)) {
         const allNodes = Array.from(document.querySelectorAll('#app p, #app div, #app li, #app span'));
         let foundHeader = false;
         for (const el of allNodes) {
           const text = el.textContent.trim();
-          if (/Tiện ích/i.test(text)) {
+          if (/^Tiện ích$/i.test(text) || text === 'Tiện ích') {
             foundHeader = true;
             continue;
           }
-          if (foundHeader && text && text.length < 100) {
+          if (foundHeader && text && !isGarbageUtilities(text) && text.length < 100) {
             utilities = text;
             break;
           }
         }
+      }
+
+      if (isGarbageUtilities(utilities)) {
+        utilities = '';
       }
 
       // Smart Fallback for Image
@@ -3390,7 +3441,7 @@ async function performAutoRoomExtract() {
     // Auto Match Folder
     const cleanAddress = parseVietnameseAddress(roomData.address);
     let detectedDistrict = '';
-    const knownDistricts = ['Phú Nhuận', 'Bình Thạnh', 'Quận 3', 'Quận 1', 'Thủ Đức', 'Gò Vấp', 'Quận 10'];
+    const knownDistricts = ['Phú Nhuận', 'Bình Thạnh', 'Quận 3', 'Quận 1', 'Thủ Đức', 'Gò Vấp', 'Quận 10', 'Tân Bình', 'Tân Phú'];
     for (const d of knownDistricts) {
       if (cleanAddress.toLowerCase().includes(d.toLowerCase())) {
         detectedDistrict = d;
