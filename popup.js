@@ -576,10 +576,38 @@ async function renderFolderSection() {
 
   folderListEl.innerHTML = '';
 
+  const items = await getClipboardItems();
+
+  const totalCount = items.length;
+  let uncategorizedCount = 0;
+  const folderCountMap = {};
+
+  items.forEach((item) => {
+    const fIds = Array.isArray(item.folderIds)
+      ? item.folderIds
+      : (item.folderId ? [item.folderId] : []);
+    
+    if (fIds.length === 0) {
+      uncategorizedCount++;
+    } else {
+      fIds.forEach((id) => {
+        folderCountMap[id] = (folderCountMap[id] || 0) + 1;
+      });
+    }
+  });
+
+  const createBadge = (count) => {
+    const badge = document.createElement('span');
+    badge.className = 'folder-count-badge';
+    badge.textContent = count;
+    return badge;
+  };
+
   // Add default "Tất cả" pill
   const allPill = document.createElement('span');
   allPill.className = `folder-pill${activeFolderId === 'all' ? ' active' : ''}`;
-  allPill.textContent = 'Tất cả';
+  allPill.textContent = 'Tất cả ';
+  allPill.appendChild(createBadge(totalCount));
   allPill.addEventListener('click', () => {
     activeFolderId = 'all';
     renderFolderSection();
@@ -590,7 +618,8 @@ async function renderFolderSection() {
   // Add default "Chưa phân loại" pill
   const nonePill = document.createElement('span');
   nonePill.className = `folder-pill${activeFolderId === 'none' ? ' active' : ''}`;
-  nonePill.textContent = 'Chưa phân loại';
+  nonePill.textContent = 'Chưa phân loại ';
+  nonePill.appendChild(createBadge(uncategorizedCount));
   nonePill.addEventListener('click', () => {
     activeFolderId = 'none';
     renderFolderSection();
@@ -602,14 +631,17 @@ async function renderFolderSection() {
   for (const folder of folders) {
     const pill = document.createElement('span');
     pill.className = `folder-pill${activeFolderId === folder.id ? ' active' : ''}`;
-    pill.textContent = folder.name;
+    pill.textContent = folder.name + ' ';
+    
+    const countBadge = createBadge(folderCountMap[folder.id] || 0);
+    pill.appendChild(countBadge);
 
     // Click on folder to filter and select all comments in this folder
     pill.addEventListener('click', async (e) => {
       if (e.target.classList.contains('delete-folder-btn')) return;
 
       activeFolderId = folder.id;
-      
+
       // Auto select comments in this folder
       const items = await getClipboardItems();
       selectedClipboardIds.clear();
@@ -791,7 +823,7 @@ async function initializeFoldersMenu() {
       const nextItems = items.map((item) => {
         if (selectedClipboardIds.has(item.id)) {
           let fIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
-          
+
           if (targetFolderId) {
             fIds = Array.from(new Set([...fIds, targetFolderId]));
           } else {
@@ -864,7 +896,7 @@ async function getClipboardItems() {
   return new Promise((resolve) => {
     chrome.storage.local.get([STORAGE_KEY_CLIPBOARD], (result) => {
       const items = Array.isArray(result[STORAGE_KEY_CLIPBOARD]) ? result[STORAGE_KEY_CLIPBOARD] : [];
-      
+
       let changed = false;
       const uniqueItems = [];
       const seenTexts = new Set();
@@ -1248,6 +1280,16 @@ async function renderClipboardList() {
       }
     }
 
+    if (item.roomId) {
+      const roomBadge = document.createElement('span');
+      roomBadge.className = 'comment-folder-badge';
+      roomBadge.style.background = '#fff3e0';
+      roomBadge.style.color = '#e65100';
+      roomBadge.style.borderColor = '#ffe0b2';
+      roomBadge.textContent = `#${item.roomId}`;
+      topEl.appendChild(roomBadge);
+    }
+
     const textEl = document.createElement('div');
     textEl.className = 'clipboard-item-text';
     textEl.textContent = item.text;
@@ -1333,6 +1375,7 @@ async function renderClipboardList() {
       const nextItems = items.filter((entry) => entry.id !== item.id);
       await saveClipboardItems(nextItems);
       await saveSelectedClipboardIds();
+      await renderFolderSection();
       await renderClipboardList();
     });
 
@@ -1374,13 +1417,49 @@ async function renderClipboardList() {
   updateSelectedClipboardCount();
 }
 
-async function addClipboardItem(text, imageDataUrls = [], folderIds = []) {
+function extractRoomIdFromUrl(url) {
+  if (!url) return '';
+  const match = url.match(/\/products\/(?:show\/)?(\d+)/i) || url.match(/\/(\d+)(?:\?|#|$)/);
+  return match ? match[1] : '';
+}
+
+async function checkRoomInClipboard(roomId, roomUrl) {
+  if (!roomId && !roomUrl) return null;
+  const items = await getClipboardItems();
+  const found = items.find((item) => {
+    if (roomId && item.roomId === roomId) return true;
+    if (roomUrl && item.roomUrl === roomUrl) return true;
+    if (roomId && item.text && (item.text.includes(roomId) || item.text.includes(`/show/${roomId}`))) return true;
+    return false;
+  });
+  return found || null;
+}
+
+function getFolderNamesForClipboardItem(item) {
+  if (!item) return 'Chưa phân loại';
+  const itemFolderIds = Array.isArray(item.folderIds) ? item.folderIds : (item.folderId ? [item.folderId] : []);
+  if (!itemFolderIds.length) return 'Chưa phân loại';
+  const names = itemFolderIds.map((fId) => {
+    const f = folders.find((folder) => folder.id === fId);
+    return f ? f.name : '';
+  }).filter(Boolean);
+  return names.length ? names.join(', ') : 'Chưa phân loại';
+}
+
+async function addClipboardItem(text, imageDataUrls = [], folderIds = [], metadata = {}) {
   const normalized = (text || '').trim();
   if (!normalized) return false;
 
   const items = await getClipboardItems();
   const sanitizedImages = normalizeClipboardImageDataUrls(imageDataUrls);
-  const existingIndex = items.findIndex((item) => item.text === normalized);
+  const roomId = metadata.roomId || extractRoomIdFromUrl(metadata.roomUrl || '');
+
+  const existingIndex = items.findIndex((item) => {
+    if (roomId && item.roomId === roomId) return true;
+    if (metadata.roomUrl && item.roomUrl === metadata.roomUrl) return true;
+    if (item.text === normalized) return true;
+    return false;
+  });
 
   if (existingIndex >= 0) {
     const existing = items[existingIndex];
@@ -1391,29 +1470,38 @@ async function addClipboardItem(text, imageDataUrls = [], folderIds = []) {
 
     items[existingIndex] = {
       ...existing,
+      text: normalized,
       imageDataUrls: sanitizedImages.length ? sanitizedImages : existing.imageDataUrls,
       folderIds: mergedFolderIds,
+      roomId: roomId || existing.roomId || '',
+      roomUrl: metadata.roomUrl || existing.roomUrl || '',
       folderId: '',
       updatedAt: new Date().toISOString()
     };
     await saveClipboardItems(items);
+    await renderFolderSection();
     await renderClipboardList();
-    return true;
+    return { success: true, updated: true, existingItem: items[existingIndex] };
   }
 
-  items.unshift({
+  const newItem = {
     id: generateClipboardId(normalized),
     text: normalized,
     imageDataUrls: sanitizedImages,
     folderIds: Array.isArray(folderIds) ? folderIds : [],
+    roomId: roomId || '',
+    roomUrl: metadata.roomUrl || '',
     folderId: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
-  });
+  };
+
+  items.unshift(newItem);
 
   await saveClipboardItems(items);
+  await renderFolderSection();
   await renderClipboardList();
-  return true;
+  return { success: true, updated: false, newItem };
 }
 
 async function buildCommentPayloadsFromClipboard(limit) {
@@ -1959,6 +2047,7 @@ async function initializeClipboardMenu() {
       updateSelectedClipboardCount();
       await saveSelectedClipboardIds();
       clearClipboardEditingState();
+      await renderFolderSection();
       await renderClipboardList();
       setUploadStatus('Đã xóa tất cả comment trong clipboard.');
     });
@@ -3540,8 +3629,12 @@ async function fetchGeminiAiCaption(aiPrompt, geminiApiKey) {
 
       if (res.ok) {
         const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        if (text && text.trim()) return text.trim();
+        let text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (text && text.trim()) {
+          // Remove Markdown bold/italic asterisks (* and **) since Facebook plain text doesn't render them
+          text = text.replace(/\*\*/g, '').replace(/^\s*\*+/gm, '• ').replace(/\*/g, '');
+          return text.trim();
+        }
       } else {
         const errBody = await res.json().catch(() => ({}));
         lastErrMsg = errBody.error?.message || `HTTP ${res.status} (${res.statusText})`;
@@ -3587,6 +3680,7 @@ PHONG CÁCH YÊU CẦU: ${selectedStyle}
 QUY TẮC VIẾT (RẤT QUAN TRỌNG):
 1. VIẾT NGẮN GỌN & RÕ RÀNG:
    - TUYỆT ĐỐI KHÔNG VIẾT DÀI DÒNG THÀNH BÀI VĂN TÂM SỰ/TRIẾT LÝ HỌC (Không viết kiểu "Có những ngày chỉ muốn gạt hết bộn bề...", "Nếu bạn đang tìm chốn về...").
+   - TUYỆT ĐỐI KHÔNG DÙNG DẤU SAO * HOẶC ** ĐỂ IN ĐẬM (Vì bài viết Facebook không hỗ trợ Markdown, sẽ bị hiện rác dấu **). Hãy dùng chữ IN HOA hoặc Emoji nếu muốn làm nổi bật!
    - Trình bày súc tích dạng các câu ngắn gọn, dùng emoji hợp lý và gạch đầu dòng các tiện nghi để người mua lướt qua là nắm ngay thông tin.
 2. ĐẦY ĐỦ THÔNG TIN CỐT LÕI:
    - Trích xuất chuẩn xác Địa chỉ, Mức giá, Nội thất, Tiện ích và SĐT Liên hệ (${phone || '[Số điện thoại]'}) từ nội dung comment trên.
@@ -3766,9 +3860,27 @@ async function performAutoRoomExtract(isManual = false) {
     const folderObj = currentFolders.find((f) => f.id === matchedFolderId);
     const matchedName = folderObj ? folderObj.name : 'Chưa phân loại';
 
-    if (roomExtractStatus) {
-      roomExtractStatus.textContent = `✨ Đã tự động phân loại vào thư mục "${matchedName}"!${currentExtractedRoomImage ? ' (Kèm 1 ảnh)' : ''}`;
-      roomExtractStatus.style.color = '#1b5e20';
+    const currentRoomId = extractRoomIdFromUrl(tabUrl);
+    const existingInClipboard = await checkRoomInClipboard(currentRoomId, tabUrl);
+
+    if (existingInClipboard) {
+      const existingFolderNames = getFolderNamesForClipboardItem(existingInClipboard);
+      if (roomExtractStatus) {
+        roomExtractStatus.innerHTML = `⚠️ <b>CẢNH BÁO: Phòng này (Mã #${currentRoomId}) ĐÃ CÓ trong Clipboard!</b><br><span style="font-size: 11px; color: #e65100;">(Thuộc thư mục: ${escapeHtml(existingFolderNames)})</span>`;
+      }
+      if (addRoomCommentBtn) {
+        addRoomCommentBtn.textContent = `⚠️ Đã có trong Clipboard (Bấm để cập nhật lại)`;
+        addRoomCommentBtn.style.background = 'linear-gradient(180deg, #f57c00 0%, #e65100 100%)';
+      }
+    } else {
+      if (roomExtractStatus) {
+        roomExtractStatus.textContent = `✨ Phòng mới (Mã #${currentRoomId || 'N/A'}) - Tự động chọn thư mục "${matchedName}"!${currentExtractedRoomImage ? ' (Kèm 1 ảnh)' : ''}`;
+        roomExtractStatus.style.color = '#1b5e20';
+      }
+      if (addRoomCommentBtn) {
+        addRoomCommentBtn.textContent = `➕ Thêm vào danh sách Comment`;
+        addRoomCommentBtn.style.background = 'linear-gradient(180deg, #388e3c 0%, #2e7d32 100%)';
+      }
     }
   } catch (err) {
     if (err.message === 'NOT_TYRAHOME_PRODUCT') {
@@ -3807,7 +3919,6 @@ function initializeRoomExtractorMenu() {
   const roomExtractStatus = document.getElementById('roomExtractStatus');
   const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
 
-<<<<<<< HEAD
   // Load user-entered Gemini API Key & XPath Config
   const xpathFields = ['xpathPrice', 'xpathAddress', 'xpathFurniture', 'xpathUtilities', 'xpathImage', 'xpathRoomType'];
   chrome.storage.local.get(['geminiApiKey', 'xpathConfig'], (res) => {
@@ -3825,10 +3936,6 @@ function initializeRoomExtractorMenu() {
     }
   });
 
-=======
-  // Load saved Gemini API Key (Default preset)
-  const DEFAULT_GEMINI_KEY = '***';
->>>>>>> fc08118774b901ce6524e4c98296f9df0407f272
   if (geminiApiKeyInput) {
     geminiApiKeyInput.addEventListener('change', () => {
       chrome.storage.local.set({ geminiApiKey: geminiApiKeyInput.value.trim() });
@@ -3902,14 +4009,22 @@ function initializeRoomExtractorMenu() {
 
       addRoomCommentBtn.disabled = true;
       try {
-        await addClipboardItem(text, imagesToSave, folderIds);
+        const activeTab = await getActivePageTab();
+        const roomUrl = activeTab?.url || '';
+        const roomId = extractRoomIdFromUrl(roomUrl);
+
+        const result = await addClipboardItem(text, imagesToSave, folderIds, { roomId, roomUrl });
         await renderClipboardList();
         await renderFolderSection();
 
         const folderObj = folders.find((f) => f.id === selectedFolderId);
         const folderName = folderObj ? folderObj.name : 'Chưa phân loại (Không chọn thư mục)';
 
-        setRoomStatus(`🎉 Đã tự động thêm comment phòng vào danh sách! (Thư mục: ${folderName}${imagesToSave.length ? ' - Kèm 1 ảnh' : ''})`);
+        if (result && result.updated) {
+          setRoomStatus(`🎉 Đã cập nhật lại thông tin phòng (Mã #${roomId || 'N/A'}) trong Clipboard! (Thư mục: ${folderName})`);
+        } else {
+          setRoomStatus(`🎉 Đã thêm phòng mới (Mã #${roomId || 'N/A'}) vào danh sách Clipboard! (Thư mục: ${folderName}${imagesToSave.length ? ' - Kèm 1 ảnh' : ''})`);
+        }
       } catch (err) {
         setRoomStatus(`❌ Không thêm được comment: ${err.message}`, true);
       } finally {
@@ -4071,14 +4186,18 @@ function initializeRoomExtractorMenu() {
 
       addCaptionToClipboardBtn.disabled = true;
       try {
-        await addClipboardItem(text, imagesToSave, folderIds);
+        const activeTab = await getActivePageTab();
+        const roomUrl = activeTab?.url || '';
+        const roomId = extractRoomIdFromUrl(roomUrl);
+
+        await addClipboardItem(text, imagesToSave, folderIds, { roomId, roomUrl });
         await renderClipboardList();
         await renderFolderSection();
 
         const folderObj = folders.find((f) => f.id === selectedFolderId);
         const folderName = folderObj ? folderObj.name : 'Chưa phân loại (Không chọn thư mục)';
 
-        setRoomStatus(`🎉 Đã thêm bài đăng FB vào danh sách Clipboard Comment! (Thư mục: ${folderName})`);
+        setRoomStatus(`🎉 Đã lưu bài đăng FB vào Clipboard Comment (Mã #${roomId || 'N/A'})! (Thư mục: ${folderName})`);
       } catch (err) {
         setRoomStatus(`❌ Không thêm được bài đăng: ${err.message}`, true);
       } finally {
