@@ -3151,10 +3151,19 @@ async function getActivePageTab() {
   return (tabs && tabs[0]) || null;
 }
 
+function isTyrahomeProductUrl(url) {
+  return /^https?:\/\/(www\.)?tyrahome\.net\/products\//i.test((url || '').trim());
+}
+
 async function extractRoomInfoFromActiveTab(xpathMap) {
   const activeTab = await getActivePageTab();
   if (!activeTab || !activeTab.id) {
     throw new Error('Không tìm thấy tab đang mở trên trình duyệt.');
+  }
+
+  const tabUrl = activeTab.url || '';
+  if (!isTyrahomeProductUrl(tabUrl)) {
+    throw new Error('NOT_TYRAHOME_PRODUCT');
   }
 
   const response = await chrome.scripting.executeScript({
@@ -3307,7 +3316,7 @@ async function extractRoomInfoFromActiveTab(xpathMap) {
   return null;
 }
 
-async function formatRoomCommentText({ price, address, furnitureRaw, utilities }, geminiApiKey = '') {
+async function formatRoomCommentText({ price, address, furnitureRaw, utilities }, phone = '', geminiApiKey = '') {
   const lines = [];
   let cleanAddress = '';
   let hashtagPrice = '';
@@ -3359,7 +3368,278 @@ async function formatRoomCommentText({ price, address, furnitureRaw, utilities }
     lines.push(`Tiện ích: (Không đọc được)`);
   }
 
+  const inputContact = (document.getElementById('contactPhone')?.value || document.getElementById('captionPhone')?.value || '').trim();
+  const finalContact = (phone && phone.trim()) || inputContact;
+
+  if (finalContact) {
+    lines.push(`Liên hệ: ${finalContact}`);
+  } else {
+    lines.push(`Liên hệ: (Chưa nhập SĐT cấu hình)`);
+  }
+
   return lines.join('\n');
+}
+
+let lastExtractedRoomData = null;
+
+function getNearbyUniversities(addressStr) {
+  const addr = (addressStr || '').toLowerCase();
+  if (addr.includes('bình thạnh') || addr.includes('binh thanh')) {
+    return 'Gần ĐH HUTECH, UEF, Văn Lang, GTVT';
+  }
+  if (addr.includes('quận 10') || addr.includes('quan 10')) {
+    return 'Gần ĐH Bách Khoa, HUFLIT, UEH, Y Dược';
+  }
+  if (addr.includes('thủ đức') || addr.includes('thu duc')) {
+    return 'Gần Làng Đại Học Quốc Gia, SPKT, Nông Lâm, HUTECH';
+  }
+  if (addr.includes('gò vấp') || addr.includes('go vap')) {
+    return 'Gần ĐH Công Nghiệp (IUH), Văn Lang CS3, Cao Đẳng Bách Việt';
+  }
+  if (addr.includes('tân bình') || addr.includes('tan binh')) {
+    return 'Gần ĐH Tài Nguyên Môi Trường, Học viện Hàng Không';
+  }
+  if (addr.includes('quận 3') || addr.includes('quan 3')) {
+    return 'Gần ĐH Mở, Kiến Trúc, UEH, SP';
+  }
+  if (addr.includes('quận 1') || addr.includes('quan 1')) {
+    return 'Gần ĐH KHXH&NV, ĐH Ngân Hàng, Sài Gòn';
+  }
+  if (addr.includes('phú nhuận') || addr.includes('phu nhuan')) {
+    return 'Gần ĐH Y Dược, Cao Đẳng FPT, ĐH FPT';
+  }
+  if (addr.includes('tân phú') || addr.includes('tan phu')) {
+    return 'Gần ĐH Công Thương (HUIT), ĐH Văn Hiến';
+  }
+  if (addr.includes('quận 7') || addr.includes('quan 7')) {
+    return 'Gần ĐH Tôn Đức Thắng, RMIT, UFM';
+  }
+  return '';
+}
+
+function parseAddressComponents(addressRaw) {
+  const clean = parseVietnameseAddress(addressRaw);
+  const parts = clean.split(',').map((s) => s.trim()).filter(Boolean);
+  const street = parts[0] || '';
+  const district = parts[1] || parts[0] || '';
+  return { clean, street, district };
+}
+
+function generateDynamicHashtags(roomData, customHashtags = '') {
+  const { street, district } = parseAddressComponents(roomData.address || '');
+
+  const removeAccents = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+  const toPascalCase = (str) => removeAccents(str).replace(/[^a-zA-Z0-9]/g, ' ').split(/\s+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('');
+
+  const tagList = [];
+
+  // Custom / Brand tags
+  if (customHashtags && customHashtags.trim()) {
+    const rawTags = customHashtags.trim().split(/\s+/).filter((t) => t.startsWith('#'));
+    tagList.push(...rawTags);
+  } else {
+    tagList.push('#KeyZoneHome', '#Studio');
+  }
+
+  // Location tags
+  if (street) tagList.push(`#${toPascalCase(street)}`);
+  if (district) tagList.push(`#${toPascalCase(district)}`);
+
+  // Price tag
+  const numPrice = parseNumericPrice(roomData.price);
+  if (numPrice > 0) {
+    const tr = numPrice / 1000000;
+    tagList.push(`#${tr.toString().replace('.', 't')}Trieu`);
+  }
+
+  // Feature tags extracted from text
+  const combinedText = `${roomData.furnitureRaw || ''} ${roomData.utilities || ''}`.toLowerCase();
+  if (combinedText.includes('nội thất') || combinedText.includes('noi that')) tagList.push('#PhongFullNoiThat');
+  if (combinedText.includes('máy giặt') || combinedText.includes('may giat')) tagList.push('#MayGiatRieng');
+  if (combinedText.includes('thang máy') || combinedText.includes('thang may')) tagList.push('#ThangMay');
+  if (combinedText.includes('ban công') || combinedText.includes('ban cong')) tagList.push('#BanCongRong');
+  if (combinedText.includes('cửa sổ') || combinedText.includes('cua so')) tagList.push('#CuaSoThoang');
+
+  // General real estate tags
+  tagList.push('#ChoThuePhong', '#TimPhongTro', '#PhongTroDep');
+
+  return Array.from(new Set(tagList)).join(' ');
+}
+
+async function fetchGeminiAiCaption(aiPrompt, geminiApiKey) {
+  const cleanKey = (geminiApiKey || '').trim();
+  if (!cleanKey) {
+    throw new Error('Chưa nhập Gemini API Key. Vui lòng dán API Key tại tab GET API -> Cấu hình & AI.');
+  }
+
+  // Validate API Key & fetch supported models directly from Google AI Studio
+  const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`);
+  const listData = await listRes.json().catch(() => ({}));
+
+  if (!listRes.ok) {
+    const errMsg = listData.error?.message || `HTTP ${listRes.status} (${listRes.statusText})`;
+    if (listRes.status === 400 || errMsg.toLowerCase().includes('key not valid') || errMsg.toLowerCase().includes('invalid')) {
+      throw new Error(`API Key không hợp lệ (${errMsg}). Hãy tạo API Key mới miễn phí tại https://aistudio.google.com/app/apikey`);
+    }
+    if (listRes.status === 403 || errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('disabled')) {
+      throw new Error(`API Key chưa được cấp quyền Generative Language API (${errMsg}). Hãy tạo Key mới tại https://aistudio.google.com/app/apikey`);
+    }
+    throw new Error(`Lỗi xác thực Gemini API Key: ${errMsg}`);
+  }
+
+  // Extract models that support generateContent for this API key
+  const models = listData.models || [];
+  const validModels = models.filter((m) =>
+    m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent')
+  );
+
+  if (!validModels.length) {
+    throw new Error('API Key của bạn không có model Gemini nào hỗ trợ tạo văn bản. Hãy tạo Key mới tại https://aistudio.google.com/app/apikey');
+  }
+
+  // Preferred model ordering: gemini-3.6-flash first, gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-pro, etc.
+  const preferredNames = ['gemini-3.6-flash', 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'];
+  const orderedModels = [];
+
+  for (const pref of preferredNames) {
+    const found = validModels.find((m) => m.name.toLowerCase().includes(pref));
+    if (found && !orderedModels.includes(found.name)) {
+      orderedModels.push(found.name);
+    }
+  }
+
+  for (const m of validModels) {
+    if (!orderedModels.includes(m.name)) {
+      orderedModels.push(m.name);
+    }
+  }
+
+  // Direct fallback names if ListModels returned models without flash
+  if (!orderedModels.length) {
+    orderedModels.push('models/gemini-3.6-flash', 'models/gemini-1.5-flash', 'models/gemini-2.0-flash');
+  }
+
+  let lastErrMsg = '';
+
+  for (const modelPath of orderedModels) {
+    // modelPath is full string like "models/gemini-3.6-flash" or "models/gemini-1.5-flash"
+    try {
+      const cleanPath = modelPath.startsWith('models/') ? modelPath : `models/${modelPath}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/${cleanPath}:generateContent?key=${cleanKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: aiPrompt }] }],
+          generationConfig: {
+            temperature: 1.0,
+            topP: 0.95
+          }
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (text && text.trim()) return text.trim();
+      } else {
+        const errBody = await res.json().catch(() => ({}));
+        lastErrMsg = errBody.error?.message || `HTTP ${res.status} (${res.statusText})`;
+        console.warn(`[Gemini Model Retry] Model ${cleanPath} failed: ${lastErrMsg}. Retrying next available model...`);
+      }
+    } catch (err) {
+      lastErrMsg = err.message || String(err);
+    }
+  }
+
+  throw new Error(`Lỗi tạo bài đăng từ Gemini API (${lastErrMsg}).`);
+}
+
+async function formatRoomCaptionText(roomData, { titleTemplate, phone, customHashtags, currentCommentText }, geminiApiKey = '', forceAi = false) {
+  if (!roomData && !currentCommentText) return '';
+  const priceStr = roomData?.price ? roomData.price.replace(/💸/g, '').trim() : '';
+  const { clean: cleanAddr } = parseAddressComponents(roomData?.address || '');
+
+  // Attempt Gemini AI if key is present or AI button clicked
+  if (geminiApiKey && geminiApiKey.trim()) {
+    try {
+      const styles = [
+        'Phong cách Ngắn gọn, Đắt giá & Nổi bật (câu từ súc tích, gạch đầu dòng tiện ích rõ ràng, dễ đọc)',
+        'Phong cách Săn Phòng Hot / Chốt cọc nhanh (ngắn gọn, giật tin hot, nhấn mạnh điểm cộng nổi bật)',
+        'Phong cách Đặt câu hỏi súc tích (dành cho người tìm phòng gấp, trực diện vào vị trí & mức giá)',
+        'Phong cách Review ngắn gọn (liệt kê điểm cộng nổi bật, thông tin đắt giá, đọc là muốn cọc)'
+      ];
+      const selectedStyle = styles[Math.floor(Math.random() * styles.length)];
+      const randomSeed = Math.floor(Math.random() * 1000000);
+
+      const aiPrompt = `Bạn là một chuyên gia viết bài đăng cho thuê phòng trọ Facebook cực kỳ chuyên nghiệp và súc tích.
+Mã sáng tạo ngẫu nhiên: #${randomSeed}
+
+NHIỆM VỤ: Dựa vào NỘI DUNG COMMENT PHÒNG dưới đây, hãy sáng tạo 1 bài đăng Facebook NGẮN GỌN, SÚC TÍCH, NỔI BẬT VÀ DỄ ĐỌC.
+
+NỘI DUNG COMMENT PHÒNG DÙNG ĐỂ VIẾT:
+"""
+${currentCommentText || `Giá: ${priceStr}\nĐịa chỉ: ${roomData?.address || ''}\nNội thất: ${roomData?.furnitureRaw || ''}\nTiện ích: ${roomData?.utilities || ''}\nLiên hệ: ${phone || ''}`}
+"""
+
+PHONG CÁCH YÊU CẦU: ${selectedStyle}
+
+QUY TẮC VIẾT (RẤT QUAN TRỌNG):
+1. VIẾT NGẮN GỌN & RÕ RÀNG:
+   - TUYỆT ĐỐI KHÔNG VIẾT DÀI DÒNG THÀNH BÀI VĂN TÂM SỰ/TRIẾT LÝ HỌC (Không viết kiểu "Có những ngày chỉ muốn gạt hết bộn bề...", "Nếu bạn đang tìm chốn về...").
+   - Trình bày súc tích dạng các câu ngắn gọn, dùng emoji hợp lý và gạch đầu dòng các tiện nghi để người mua lướt qua là nắm ngay thông tin.
+2. ĐẦY ĐỦ THÔNG TIN CỐT LÕI:
+   - Trích xuất chuẩn xác Địa chỉ, Mức giá, Nội thất, Tiện ích và SĐT Liên hệ (${phone || '[Số điện thoại]'}) từ nội dung comment trên.
+3. ĐẠI HỌC LÂN CẬN CHUẨN TPHCM:
+   - Tự động phân tích tên đường / tên quận ở TP.HCM từ địa chỉ trên để gợi ý 2-4 trường đại học lân cận phù hợp (Bình Thạnh -> HUTECH, UEF, Văn Lang; Quận 10 -> Bách Khoa, HUFLIT,...).
+4. HASHTAGS ĐỘNG:
+   - Tạo 8-12 hashtags động ngắn ở cuối bài (#TenDuong, #TenQuan, #MucGia, #TienNhi, #TimPhongTro...). ${customHashtags ? `Thêm: ${customHashtags}` : ''}
+
+Chỉ trả về DUY NHẤT nội dung bài đăng Facebook hoàn chỉnh. Không kèm lời chào, không giải thích hay mở ngoặc.`;
+
+      return await fetchGeminiAiCaption(aiPrompt, geminiApiKey);
+    } catch (e) {
+      console.warn('[Gemini AI Caption] Error:', e);
+      if (forceAi) {
+        throw e;
+      }
+    }
+  } else if (forceAi) {
+    throw new Error('Chưa có Gemini API Key. Vui lòng dán API Key tại tab GET API -> Cấu hình & AI.');
+  }
+
+  // Fallback Local Template Generator
+  let titleStr = (titleTemplate || '🏡 STUDIO FULL NỘI THẤT – {ADDRESS} ✨').trim();
+  const shortAddrUpper = (cleanAddr || roomData.address || '').toUpperCase();
+  if (titleStr.includes('{ADDRESS}')) {
+    titleStr = titleStr.replace('{ADDRESS}', shortAddrUpper);
+  } else {
+    titleStr = `${titleStr} – ${shortAddrUpper} ✨`;
+  }
+
+  const nearbyUnis = getNearbyUniversities(cleanAddr || roomData.address);
+  const addressLine = cleanAddr
+    ? `📍 Đường ${cleanAddr}${nearbyUnis ? ` (${nearbyUnis})` : ''}`
+    : `📍 ${roomData.address || 'Đang cập nhật địa chỉ'}`;
+
+  const priceLine = priceStr
+    ? `💰 Chỉ ${priceStr}${/tháng|thang/i.test(priceStr) ? '' : '/tháng'}`
+    : '💰 Giá: Thỏa thuận';
+
+  const cleanFurniture = parseFurnitureText(roomData.furnitureRaw);
+  const utilsList = [];
+  if (cleanFurniture) utilsList.push(cleanFurniture);
+  if (roomData.utilities) utilsList.push(roomData.utilities);
+  const utilitiesLine = utilsList.length
+    ? `✨ Tiện ích: ${utilsList.join(' | ')}`
+    : '✨ Tiện ích: Full nội thất | Giờ giấc tự do | An ninh';
+
+  const phoneLine = `LH: ${phone || '090xxxxxxx'}`;
+  const ctaBlock = `📩 Inbox ngay để xem phòng thực tế và giữ phòng!\n${phoneLine}`;
+
+  const hashtagsLine = generateDynamicHashtags(roomData, customHashtags);
+
+  return `${titleStr}\n\n${addressLine}\n\n${priceLine}\n\n${utilitiesLine}\n\n${ctaBlock}\n\n${hashtagsLine}`;
 }
 
 async function renderRoomFolderOptions() {
@@ -3382,13 +3662,28 @@ async function renderRoomFolderOptions() {
 
 let autoExtractTimer = null;
 
-async function performAutoRoomExtract() {
+async function performAutoRoomExtract(isManual = false) {
   const roomCommentText = document.getElementById('roomCommentText');
   const roomExtractedResultBox = document.getElementById('roomExtractedResultBox');
   const roomExtractStatus = document.getElementById('roomExtractStatus');
   const extractRoomBtn = document.getElementById('extractRoomBtn');
   const roomImagePreviewContainer = document.getElementById('roomImagePreviewContainer');
   const roomImagePreview = document.getElementById('roomImagePreview');
+
+  const activeTab = await getActivePageTab();
+  const tabUrl = activeTab?.url || '';
+
+  if (!isTyrahomeProductUrl(tabUrl)) {
+    if (roomExtractStatus) {
+      if (isManual) {
+        roomExtractStatus.textContent = 'ℹ Chỉ tự động đọc thông tin từ link sản phẩm Tyrahome (https://tyrahome.net/products/...).';
+      } else {
+        roomExtractStatus.textContent = 'ℹ Tab hiện tại không phải link sản phẩm Tyrahome (https://tyrahome.net/products/...).';
+      }
+      roomExtractStatus.style.color = '#7c305c';
+    }
+    return;
+  }
 
   const xpathPrice = document.getElementById('xpathPrice')?.value || '';
   const xpathAddress = document.getElementById('xpathAddress')?.value || '';
@@ -3420,7 +3715,13 @@ async function performAutoRoomExtract() {
       return;
     }
 
-    const commentString = await formatRoomCommentText(roomData, geminiApiKey);
+    lastExtractedRoomData = roomData;
+
+    const captionPhone = document.getElementById('captionPhone')?.value || '';
+    const contactPhone = document.getElementById('contactPhone')?.value || '';
+    const phone = (captionPhone || contactPhone || '').trim();
+
+    const commentString = await formatRoomCommentText(roomData, phone, geminiApiKey);
 
     if (roomCommentText) {
       roomCommentText.value = commentString;
@@ -3470,6 +3771,13 @@ async function performAutoRoomExtract() {
       roomExtractStatus.style.color = '#1b5e20';
     }
   } catch (err) {
+    if (err.message === 'NOT_TYRAHOME_PRODUCT') {
+      if (roomExtractStatus) {
+        roomExtractStatus.textContent = 'ℹ Chỉ tự động đọc thông tin từ link sản phẩm Tyrahome (https://tyrahome.net/products/...).';
+        roomExtractStatus.style.color = '#7c305c';
+      }
+      return;
+    }
     console.error('[AutoExtract] Error:', err);
     if (roomExtractStatus) {
       roomExtractStatus.textContent = `ℹ ${err.message || 'Mở tab chi tiết phòng rồi nhấn Đọc lại.'}`;
@@ -3486,21 +3794,71 @@ function initializeRoomExtractorMenu() {
   const roomCommentText = document.getElementById('roomCommentText');
   const roomFolderSelect = document.getElementById('roomFolderSelect');
   const addRoomCommentBtn = document.getElementById('addRoomCommentBtn');
+  const generateAiCaptionBtn = document.getElementById('generateAiCaptionBtn');
+  const generateCaptionBtn = document.getElementById('generateCaptionBtn');
+  const fbCaptionResultBox = document.getElementById('fbCaptionResultBox');
+  const fbCaptionText = document.getElementById('fbCaptionText');
+  const copyCaptionBtn = document.getElementById('copyCaptionBtn');
+  const addCaptionToClipboardBtn = document.getElementById('addCaptionToClipboardBtn');
+  const captionTitlePattern = document.getElementById('captionTitlePattern');
+  const captionPhone = document.getElementById('captionPhone');
+  const captionHashtags = document.getElementById('captionHashtags');
+  const contactPhone = document.getElementById('contactPhone');
   const roomExtractStatus = document.getElementById('roomExtractStatus');
   const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
 
-  // Load saved Gemini API Key (Default preset)
-  const DEFAULT_GEMINI_KEY = 'AIzaSyBYGsY2uvXNjpNDzLmI_DdJb_RvcjJzqRw';
+  // Load user-entered Gemini API Key & XPath Config
+  const xpathFields = ['xpathPrice', 'xpathAddress', 'xpathFurniture', 'xpathUtilities', 'xpathImage', 'xpathRoomType'];
+  chrome.storage.local.get(['geminiApiKey', 'xpathConfig'], (res) => {
+    let savedKey = res.geminiApiKey || '';
+    if (savedKey.includes('AIzaSyBYGsY2uvXNjpNDzLmI')) {
+      savedKey = '';
+      chrome.storage.local.remove(['geminiApiKey']);
+    }
+    if (geminiApiKeyInput) geminiApiKeyInput.value = savedKey;
+
+    const config = res.xpathConfig || {};
+    for (const field of xpathFields) {
+      const el = document.getElementById(field);
+      if (el && config[field]) el.value = config[field];
+    }
+  });
+
   if (geminiApiKeyInput) {
-    chrome.storage.local.get(['geminiApiKey'], (res) => {
-      const activeKey = res.geminiApiKey || DEFAULT_GEMINI_KEY;
-      geminiApiKeyInput.value = activeKey;
-      if (!res.geminiApiKey) {
-        chrome.storage.local.set({ geminiApiKey: DEFAULT_GEMINI_KEY });
-      }
-    });
     geminiApiKeyInput.addEventListener('change', () => {
-      chrome.storage.local.set({ geminiApiKey: geminiApiKeyInput.value.trim() || DEFAULT_GEMINI_KEY });
+      chrome.storage.local.set({ geminiApiKey: geminiApiKeyInput.value.trim() });
+    });
+    geminiApiKeyInput.addEventListener('input', () => {
+      chrome.storage.local.set({ geminiApiKey: geminiApiKeyInput.value.trim() });
+    });
+  }
+
+  const saveXpathConfigBtn = document.getElementById('saveXpathConfigBtn');
+  const resetXpathConfigBtn = document.getElementById('resetXpathConfigBtn');
+
+  if (saveXpathConfigBtn) {
+    saveXpathConfigBtn.addEventListener('click', () => {
+      const config = {};
+      for (const field of xpathFields) {
+        const el = document.getElementById(field);
+        if (el) config[field] = el.value.trim();
+      }
+      const apiKeyVal = (geminiApiKeyInput?.value || '').trim();
+      chrome.storage.local.set({ xpathConfig: config, geminiApiKey: apiKeyVal }, () => {
+        setRoomStatus('🎉 Đã lưu cấu hình XPath & Gemini API Key!');
+      });
+    });
+  }
+
+  if (resetXpathConfigBtn) {
+    resetXpathConfigBtn.addEventListener('click', () => {
+      for (const field of xpathFields) {
+        const el = document.getElementById(field);
+        if (el) el.value = '';
+      }
+      chrome.storage.local.remove(['xpathConfig'], () => {
+        setRoomStatus('🔄 Đã khôi phục mặc định XPath.');
+      });
     });
   }
 
@@ -3520,7 +3878,7 @@ function initializeRoomExtractorMenu() {
   if (extractRoomBtn) {
     extractRoomBtn.addEventListener('click', async () => {
       extractRoomBtn.disabled = true;
-      await performAutoRoomExtract();
+      await performAutoRoomExtract(true);
       extractRoomBtn.disabled = false;
     });
   }
@@ -3555,19 +3913,191 @@ function initializeRoomExtractorMenu() {
     });
   }
 
+  if (generateAiCaptionBtn) {
+    generateAiCaptionBtn.addEventListener('click', async () => {
+      const apiKeyInput = document.getElementById('geminiApiKeyInput');
+      const apiKey = (apiKeyInput?.value || '').trim();
+
+      if (!apiKey) {
+        setRoomStatus('⚠️ Vui lòng nhập Gemini API Key trong mục "⚙ Cấu hình & AI" (tab GET API) trước khi dùng AI!', true);
+        return;
+      }
+
+      generateAiCaptionBtn.disabled = true;
+      setRoomStatus('🤖 AI (Gemini) đang phân tích phòng và tự động sinh bài viết + Hashtags động...');
+
+      try {
+        let roomData = lastExtractedRoomData;
+        if (!roomData) {
+          const xpathPrice = document.getElementById('xpathPrice')?.value || '';
+          const xpathAddress = document.getElementById('xpathAddress')?.value || '';
+          const xpathFurniture = document.getElementById('xpathFurniture')?.value || '';
+          const xpathUtilities = document.getElementById('xpathUtilities')?.value || '';
+          const xpathImage = document.getElementById('xpathImage')?.value || '';
+          const xpathRoomType = document.getElementById('xpathRoomType')?.value || '';
+
+          roomData = await extractRoomInfoFromActiveTab({
+            price: xpathPrice,
+            address: xpathAddress,
+            furniture: xpathFurniture,
+            utilities: xpathUtilities,
+            image: xpathImage,
+            roomType: xpathRoomType
+          });
+          if (roomData) lastExtractedRoomData = roomData;
+        }
+
+        if (!roomData) {
+          setRoomStatus('❌ Không thấy dữ liệu phòng để AI viết bài. Hãy mở tab chi tiết phòng.', true);
+          return;
+        }
+
+        const titleTemplate = captionTitlePattern?.value || '🏡 STUDIO FULL NỘI THẤT – {ADDRESS} ✨';
+        const phone = (captionPhone?.value || contactPhone?.value || '').trim();
+        const customHashtags = (captionHashtags?.value || '').trim();
+        const currentCommentText = (document.getElementById('roomCommentText')?.value || '').trim();
+
+        const captionStr = await formatRoomCaptionText(roomData, { titleTemplate, phone, customHashtags, currentCommentText }, apiKey, true);
+
+        if (fbCaptionText) {
+          fbCaptionText.value = captionStr;
+        }
+
+        if (fbCaptionResultBox) {
+          fbCaptionResultBox.classList.remove('is-hidden');
+          fbCaptionResultBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        setRoomStatus('✨ AI Gemini đã viết bài và sinh Hashtags động thành công!');
+      } catch (err) {
+        setRoomStatus(`❌ Lỗi AI viết bài: ${err.message || err}`, true);
+      } finally {
+        generateAiCaptionBtn.disabled = false;
+      }
+    });
+  }
+
+  if (generateCaptionBtn) {
+    generateCaptionBtn.addEventListener('click', async () => {
+      generateCaptionBtn.disabled = true;
+      setRoomStatus('⚡ Đang tạo bài đăng mẫu...');
+
+      try {
+        let roomData = lastExtractedRoomData;
+        if (!roomData) {
+          const xpathPrice = document.getElementById('xpathPrice')?.value || '';
+          const xpathAddress = document.getElementById('xpathAddress')?.value || '';
+          const xpathFurniture = document.getElementById('xpathFurniture')?.value || '';
+          const xpathUtilities = document.getElementById('xpathUtilities')?.value || '';
+          const xpathImage = document.getElementById('xpathImage')?.value || '';
+          const xpathRoomType = document.getElementById('xpathRoomType')?.value || '';
+
+          roomData = await extractRoomInfoFromActiveTab({
+            price: xpathPrice,
+            address: xpathAddress,
+            furniture: xpathFurniture,
+            utilities: xpathUtilities,
+            image: xpathImage,
+            roomType: xpathRoomType
+          });
+          if (roomData) lastExtractedRoomData = roomData;
+        }
+
+        const titleTemplate = captionTitlePattern?.value || '🏡 STUDIO FULL NỘI THẤT – {ADDRESS} ✨';
+        const phone = (captionPhone?.value || contactPhone?.value || '').trim();
+        const customHashtags = (captionHashtags?.value || '').trim();
+        const currentCommentText = (document.getElementById('roomCommentText')?.value || '').trim();
+        const geminiApiKey = (geminiApiKeyInput?.value || '').trim();
+
+        const captionStr = await formatRoomCaptionText(roomData, { titleTemplate, phone, customHashtags, currentCommentText }, geminiApiKey, false);
+
+        if (fbCaptionText) {
+          fbCaptionText.value = captionStr;
+        }
+
+        if (fbCaptionResultBox) {
+          fbCaptionResultBox.classList.remove('is-hidden');
+          fbCaptionResultBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        setRoomStatus('✨ Đã tạo bài đăng mẫu thành công!');
+      } catch (err) {
+        setRoomStatus(`❌ Lỗi tạo bài đăng: ${err.message || err}`, true);
+      } finally {
+        generateCaptionBtn.disabled = false;
+      }
+    });
+  }
+
+  if (copyCaptionBtn) {
+    copyCaptionBtn.addEventListener('click', async () => {
+      const text = (fbCaptionText?.value || '').trim();
+      if (!text) {
+        setRoomStatus('❌ Nội dung caption rỗng, không thể sao chép.', true);
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(text);
+        setRoomStatus('🎉 Đã sao chép caption bài đăng Facebook vào bộ nhớ tạm!');
+      } catch (err) {
+        if (fbCaptionText) {
+          fbCaptionText.select();
+          document.execCommand('copy');
+          setRoomStatus('🎉 Đã sao chép caption bài đăng Facebook vào bộ nhớ tạm!');
+        } else {
+          setRoomStatus(`❌ Không sao chép được: ${err.message}`, true);
+        }
+      }
+    });
+  }
+
+  if (addCaptionToClipboardBtn) {
+    addCaptionToClipboardBtn.addEventListener('click', async () => {
+      const text = (fbCaptionText?.value || '').trim();
+      if (!text) {
+        setRoomStatus('❌ Nội dung caption rỗng, không thể thêm.', true);
+        return;
+      }
+
+      const selectedFolderId = roomFolderSelect?.value || '';
+      const folderIds = selectedFolderId ? [selectedFolderId] : [];
+      const imagesToSave = currentExtractedRoomImage ? [currentExtractedRoomImage] : [];
+
+      addCaptionToClipboardBtn.disabled = true;
+      try {
+        await addClipboardItem(text, imagesToSave, folderIds);
+        await renderClipboardList();
+        await renderFolderSection();
+
+        const folderObj = folders.find((f) => f.id === selectedFolderId);
+        const folderName = folderObj ? folderObj.name : 'Chưa phân loại (Không chọn thư mục)';
+
+        setRoomStatus(`🎉 Đã thêm bài đăng FB vào danh sách Clipboard Comment! (Thư mục: ${folderName})`);
+      } catch (err) {
+        setRoomStatus(`❌ Không thêm được bài đăng: ${err.message}`, true);
+      } finally {
+        addCaptionToClipboardBtn.disabled = false;
+      }
+    });
+  }
+
   // Trigger auto extract immediately on load
-  performAutoRoomExtract();
+  performAutoRoomExtract(false);
 
   // Listen to tab changes to auto extract when user switches tab
-  chrome.tabs.onActivated.addListener(() => {
-    if (autoExtractTimer) clearTimeout(autoExtractTimer);
-    autoExtractTimer = setTimeout(performAutoRoomExtract, 500);
+  chrome.tabs.onActivated.addListener(async () => {
+    const activeTab = await getActivePageTab();
+    if (activeTab && isTyrahomeProductUrl(activeTab.url)) {
+      if (autoExtractTimer) clearTimeout(autoExtractTimer);
+      autoExtractTimer = setTimeout(() => performAutoRoomExtract(false), 500);
+    }
   });
 
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === 'complete' && tab.active) {
+    if (changeInfo.status === 'complete' && tab.active && isTyrahomeProductUrl(tab.url)) {
       if (autoExtractTimer) clearTimeout(autoExtractTimer);
-      autoExtractTimer = setTimeout(performAutoRoomExtract, 500);
+      autoExtractTimer = setTimeout(() => performAutoRoomExtract(false), 500);
     }
   });
 }
@@ -3602,7 +4132,10 @@ function saveFormData() {
     numPosts: document.getElementById('numPosts')?.value || '',
     targetPostUrl: document.getElementById('targetPostUrl')?.value || '',
     clipboardCommentsPerPost: document.getElementById('clipboardCommentsPerPost')?.value || '',
-    clipboardCommentDelay: document.getElementById('clipboardCommentDelay')?.value || ''
+    clipboardCommentDelay: document.getElementById('clipboardCommentDelay')?.value || '',
+    captionTitlePattern: document.getElementById('captionTitlePattern')?.value || '',
+    captionPhone: document.getElementById('captionPhone')?.value || '',
+    captionHashtags: document.getElementById('captionHashtags')?.value || ''
   };
 
   chrome.storage.local.set({ [STORAGE_KEY_FORM_DATA]: formData });
@@ -3614,7 +4147,7 @@ function loadFormData() {
     if (!formData) return;
 
     // Restore each field
-    const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost', 'clipboardCommentDelay'];
+    const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost', 'clipboardCommentDelay', 'captionTitlePattern', 'captionPhone', 'captionHashtags'];
     for (const field of fields) {
       const el = document.getElementById(field);
       if (el && formData[field]) {
@@ -3625,7 +4158,7 @@ function loadFormData() {
 }
 
 function initializeFormAutoSave() {
-  const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost', 'clipboardCommentDelay'];
+  const fields = ['description', 'fees', 'price', 'amenities', 'images', 'contactPhone', 'numPosts', 'targetPostUrl', 'clipboardCommentsPerPost', 'clipboardCommentDelay', 'captionTitlePattern', 'captionPhone', 'captionHashtags'];
 
   for (const field of fields) {
     const el = document.getElementById(field);
