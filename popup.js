@@ -3490,7 +3490,7 @@ function initializeRoomExtractorMenu() {
   const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
 
   // Load saved Gemini API Key (Default preset)
-  const DEFAULT_GEMINI_KEY = 'AIzaSyBYGsY2uvXNjpNDzLmI_DdJb_RvcjJzqRw';
+  const DEFAULT_GEMINI_KEY = '***';
   if (geminiApiKeyInput) {
     chrome.storage.local.get(['geminiApiKey'], (res) => {
       const activeKey = res.geminiApiKey || DEFAULT_GEMINI_KEY;
