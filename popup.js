@@ -3807,6 +3807,7 @@ function initializeRoomExtractorMenu() {
   const roomExtractStatus = document.getElementById('roomExtractStatus');
   const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
 
+<<<<<<< HEAD
   // Load user-entered Gemini API Key & XPath Config
   const xpathFields = ['xpathPrice', 'xpathAddress', 'xpathFurniture', 'xpathUtilities', 'xpathImage', 'xpathRoomType'];
   chrome.storage.local.get(['geminiApiKey', 'xpathConfig'], (res) => {
@@ -3824,6 +3825,10 @@ function initializeRoomExtractorMenu() {
     }
   });
 
+=======
+  // Load saved Gemini API Key (Default preset)
+  const DEFAULT_GEMINI_KEY = '***';
+>>>>>>> fc08118774b901ce6524e4c98296f9df0407f272
   if (geminiApiKeyInput) {
     geminiApiKeyInput.addEventListener('change', () => {
       chrome.storage.local.set({ geminiApiKey: geminiApiKeyInput.value.trim() });
