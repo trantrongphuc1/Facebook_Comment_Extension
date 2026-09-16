@@ -41,23 +41,42 @@ function setElementTextViaExecCommand(element, text) {
   if (!element) return;
   element.focus();
 
-  try {
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    selection.removeAllRanges();
-    selection.addRange(range);
+  const rawText = String(text || '');
 
+  // 1. Clear existing text in Lexical editor and DOM
+  try {
+    document.execCommand('selectAll', false, null);
     document.execCommand('delete', false, null);
-    document.execCommand('insertText', false, text);
   } catch (e) {
-    console.error('[Text Injection] execCommand failed, falling back to textContent', e);
-    element.textContent = text;
-    element.dispatchEvent(new InputEvent('input', {
+    console.warn('[Text Injection] selectAll/delete failed:', e);
+  }
+
+  if ((element.textContent || '').trim().length > 0) {
+    element.innerHTML = '';
+    element.focus();
+  }
+
+  if (!rawText) return;
+
+  // 2. Synthetic Paste via ClipboardEvent with DataTransfer (does NOT touch OS/system clipboard)
+  try {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', rawText);
+
+    const escapeHtml = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const htmlLines = rawText.split('\n').map((line) => `<div>${escapeHtml(line) || '<br>'}</div>`).join('');
+    dataTransfer.setData('text/html', `<html><body>${htmlLines}</body></html>`);
+
+    const pasteEvent = new ClipboardEvent('paste', {
+      clipboardData: dataTransfer,
       bubbles: true,
-      inputType: 'insertText',
-      data: text
-    }));
+      cancelable: true,
+      composed: true
+    });
+
+    element.dispatchEvent(pasteEvent);
+  } catch (e) {
+    console.warn('[Text Injection] Synthetic paste error:', e);
   }
 }
 

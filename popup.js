@@ -417,6 +417,10 @@ function finishRun(finalMessage) {
 
   const nextBtn = document.getElementById('nextBtn');
   if (nextBtn) nextBtn.disabled = true;
+
+  const stopRunBtn = document.getElementById('stopRunBtn');
+  if (stopRunBtn) stopRunBtn.classList.add('is-hidden');
+
   const status = document.getElementById('status');
   if (status) status.textContent = finalMessage;
 }
@@ -504,33 +508,7 @@ function generateFolderId() {
 }
 
 const DEFAULT_PRESET_FOLDERS = [
-  'Phú Nhuận trên 8tr',
-  'Phú Nhuận dưới 8',
-  'Bình Thạnh trên 8',
-  'Bình Thạnh dưới 8',
-  'Phú Nhuận 2 phòng ngủ',
-  'Bình Thạnh 2 phòng ngủ',
-  'Quận 3 trên 8',
-  'Quận 3 dưới 8',
-  'Quận 3 2pn',
-  'Quận 1 trên 8',
-  'Quận 1 dưới 8',
-  'Quận 1 2pn',
-  'Thủ Đức 2pn',
-  'Thủ Đức trên 8',
-  'Thủ Đức dưới 8',
-  'Gò Vấp trên 8',
-  'Gò Vấp dưới 8',
-  'Gò Vấp 2 pn',
-  'Quận 10 trên 8',
-  'Quận 10 dưới 8',
-  'Quận 10 2pn',
-  'Tân Bình trên 8tr',
-  'Tân Bình dưới 8',
-  'Tân Bình 2pn',
-  'Tân Phú trên 8tr',
-  'Tân Phú dưới 8',
-  'Tân Phú 2pn'
+
 ];
 
 async function getFolders() {
@@ -586,7 +564,7 @@ async function renderFolderSection() {
     const fIds = Array.isArray(item.folderIds)
       ? item.folderIds
       : (item.folderId ? [item.folderId] : []);
-    
+
     if (fIds.length === 0) {
       uncategorizedCount++;
     } else {
@@ -632,7 +610,7 @@ async function renderFolderSection() {
     const pill = document.createElement('span');
     pill.className = `folder-pill${activeFolderId === folder.id ? ' active' : ''}`;
     pill.textContent = folder.name + ' ';
-    
+
     const countBadge = createBadge(folderCountMap[folder.id] || 0);
     pill.appendChild(countBadge);
 
@@ -2873,6 +2851,10 @@ async function startRunWithConfig({ targetPosts, commentsPerPost, commentSet, ta
 
   const nextBtn = document.getElementById('nextBtn');
   if (nextBtn) nextBtn.disabled = true;
+
+  const stopRunBtn = document.getElementById('stopRunBtn');
+  if (stopRunBtn) stopRunBtn.classList.remove('is-hidden');
+
   updateRunProgressStatus();
 
   try {
@@ -2978,6 +2960,15 @@ async function startClipboardMenu() {
 
 document.getElementById('startFormBtn')?.addEventListener('click', startFormMenu);
 document.getElementById('startClipboardBtn')?.addEventListener('click', startClipboardMenu);
+
+document.getElementById('stopRunBtn')?.addEventListener('click', async () => {
+  if (runState) {
+    if (runState.targetTabId) {
+      chrome.tabs.sendMessage(runState.targetTabId, { action: 'stopRun' }, () => { });
+    }
+    finishRun('Đã dừng chạy bình luận.');
+  }
+});
 
 document.getElementById('saveFormToClipboardBtn')?.addEventListener('click', async () => {
   const generated = buildCommentFromCurrentForm(0);
@@ -3466,7 +3457,7 @@ async function formatRoomCommentText({ price, address, furnitureRaw, utilities }
     lines.push(`Liên hệ: (Chưa nhập SĐT cấu hình)`);
   }
 
-  return lines.join('\n');
+  return lines.map((l) => l.trim() + ' ').join('\n');
 }
 
 let lastExtractedRoomData = null;
