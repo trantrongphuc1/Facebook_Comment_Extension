@@ -960,11 +960,16 @@ function normalizeImportedClipboardItem(item) {
     fIds = [item.folderId.trim()];
   }
 
+  const roomId = typeof item?.roomId === 'string' ? item.roomId.trim() : (typeof item?.roomId === 'number' ? String(item.roomId) : '');
+  const roomUrl = typeof item?.roomUrl === 'string' ? item.roomUrl.trim() : '';
+
   return {
     id: typeof item?.id === 'string' && item.id.trim() ? item.id.trim() : generateClipboardId(text),
     text,
     imageDataUrls: normalizeClipboardImageDataUrls(item?.imageDataUrls || []),
     folderIds: fIds,
+    roomId,
+    roomUrl,
     createdAt: typeof item?.createdAt === 'string' && item.createdAt.trim() ? item.createdAt.trim() : new Date().toISOString(),
     updatedAt: typeof item?.updatedAt === 'string' && item.updatedAt.trim() ? item.updatedAt.trim() : new Date().toISOString()
   };
@@ -994,6 +999,8 @@ function normalizeImportedClipboardItems(sourceItems) {
     deduped[existingIndex] = {
       ...existing,
       ...normalized,
+      roomId: normalized.roomId || existing.roomId || '',
+      roomUrl: normalized.roomUrl || existing.roomUrl || '',
       folderIds: mergedFolderIds,
       imageDataUrls: normalized.imageDataUrls.length ? normalized.imageDataUrls : existing.imageDataUrls,
       createdAt: existing.createdAt || normalized.createdAt,
@@ -1316,7 +1323,8 @@ async function renderClipboardList() {
         return;
       }
 
-      const nextItems = items.map((entry) => {
+      const currentAllItems = await getClipboardItems();
+      const nextItems = currentAllItems.map((entry) => {
         if (entry.id !== item.id) return entry;
         return {
           ...entry,
@@ -1350,7 +1358,8 @@ async function renderClipboardList() {
     deleteBtn.textContent = 'Xóa';
     deleteBtn.addEventListener('click', async () => {
       selectedClipboardIds.delete(item.id);
-      const nextItems = items.filter((entry) => entry.id !== item.id);
+      const currentAllItems = await getClipboardItems();
+      const nextItems = currentAllItems.filter((entry) => entry.id !== item.id);
       await saveClipboardItems(nextItems);
       await saveSelectedClipboardIds();
       await renderFolderSection();
