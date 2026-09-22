@@ -752,7 +752,7 @@ function populateFolderDropdown() {
 
 async function initializeFoldersMenu() {
   const addFolderBtn = document.getElementById('addFolderBtn');
-  const newFolderNameInput = document.getElementById('newFolderName');
+  const newFolderNameInput = document.getElementById('newFolderNameInput');
   const bulkAddFolderBtn = document.getElementById('bulkAddFolderBtn');
   const bulkRemoveFolderBtn = document.getElementById('bulkRemoveFolderBtn');
   const bulkFolderSelect = document.getElementById('bulkFolderSelect');

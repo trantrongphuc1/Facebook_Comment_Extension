@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PhucTran auto comment</title>
+  <link rel="icon" type="image/png" href="logo.png">
   <style>
     * {
       margin: 0;
@@ -42,13 +43,24 @@
 
     h2 {
       margin: 0;
-      padding: 16px 18px 14px;
+      padding: 12px 18px;
       font-size: 16px;
       font-weight: 700;
       letter-spacing: 0.2px;
       background: linear-gradient(135deg, #fff 0%, #ffe6f4 100%);
       border-bottom: 1px solid var(--border);
       color: #8d1459;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    h2 .app-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      object-fit: contain;
+      box-shadow: 0 2px 6px rgba(141, 20, 89, 0.15);
     }
 
     .tabs {
@@ -743,8 +755,11 @@
   <div id="authGate" class="auth-gate">
     <div class="auth-card">
       <div class="auth-card-inner">
-        <div class="auth-title">Kích hoạt bằng mật khẩu</div>
-        <div class="auth-desc">Nhập mật khẩu một lần để mở toàn bộ tính năng. Sau khi kích hoạt, extension sẽ tự ghi nhớ
+        <div style="display: flex; justify-content: center; margin-bottom: 12px;">
+          <img src="logo.png" alt="Logo" style="width: 64px; height: 64px; border-radius: 14px; object-fit: contain; box-shadow: 0 4px 12px rgba(213, 46, 138, 0.2);">
+        </div>
+        <div class="auth-title" style="text-align: center;">Kích hoạt bằng mật khẩu</div>
+        <div class="auth-desc" style="text-align: center;">Nhập mật khẩu một lần để mở toàn bộ tính năng. Sau khi kích hoạt, extension sẽ tự ghi nhớ
           trên máy này.</div>
         <input type="password" id="activationPassword" placeholder="Nhập mật khẩu kích hoạt">
         <button id="activateBtn" type="button">Kích hoạt</button>
@@ -754,7 +769,10 @@
   </div>
 
   <div id="appContent" class="is-hidden">
-    <h2>PhucTran auto comment</h2>
+    <h2>
+      <img src="logo.png" alt="Logo" class="app-logo">
+      <span>PhucTran auto comment</span>
+    </h2>
     <div class="tabs">
       <button class="tab active" data-tab="comment">CMT Tools</button>
       <button class="tab" data-tab="getapi">GET API</button>

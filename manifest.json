@@ -3,6 +3,11 @@
   "name": "PhucTran auto comment",
   "version": "1.0",
   "description": "Tiện ích điền bình luận bán tự động cho bài viết Facebook",
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
   "permissions": [
     "activeTab",
     "tabs",
@@ -22,7 +27,8 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "PhucTran auto comment"
+    "default_title": "PhucTran auto comment",
+    "default_icon": "icon.png"
   },
   "side_panel": {
     "default_path": "popup.html"
