@@ -742,11 +742,52 @@
       display: block;
     }
 
-    .mini-hint {
-      margin: -4px 0 10px;
-      font-size: 11px;
-      color: #8b4a70;
-      line-height: 1.35;
+    /* Switch Toggle Styling */
+    .switch-toggle {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .switch-toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch-toggle .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #cbd5e1;
+      transition: 0.25s ease;
+      border-radius: 20px;
+    }
+
+    .switch-toggle .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.25s ease;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .switch-toggle input:checked+.slider {
+      background: linear-gradient(135deg, var(--rose-500) 0%, var(--rose-600) 100%);
+    }
+
+    .switch-toggle input:checked+.slider:before {
+      transform: translateX(16px);
     }
   </style>
 </head>
@@ -756,14 +797,17 @@
     <div class="auth-card">
       <div class="auth-card-inner">
         <div style="display: flex; justify-content: center; margin-bottom: 12px;">
-          <img src="logo.png" alt="Logo" style="width: 64px; height: 64px; border-radius: 14px; object-fit: contain; box-shadow: 0 4px 12px rgba(213, 46, 138, 0.2);">
+          <img src="logo.png" alt="Logo"
+            style="width: 64px; height: 64px; border-radius: 14px; object-fit: contain; box-shadow: 0 4px 12px rgba(213, 46, 138, 0.2);">
         </div>
-        <div class="auth-title" style="text-align: center;">Kích hoạt bằng mật khẩu</div>
-        <div class="auth-desc" style="text-align: center;">Nhập mật khẩu một lần để mở toàn bộ tính năng. Sau khi kích hoạt, extension sẽ tự ghi nhớ
-          trên máy này.</div>
+        <div class="auth-title" style="text-align: center;">Kích hoạt bản quyền</div>
+        <div class="auth-desc" style="text-align: center;">Nhập mật khẩu bản quyền được cấp để kích hoạt Extension trên
+          máy này (1 key / 1 máy).</div>
         <input type="password" id="activationPassword" placeholder="Nhập mật khẩu kích hoạt">
         <button id="activateBtn" type="button">Kích hoạt</button>
         <div id="authStatus" class="hint"></div>
+        <div id="browserIdDisplay"
+          style="margin-top: 10px; font-size: 10px; color: #8c7382; text-align: center; word-break: break-all;"></div>
       </div>
     </div>
   </div>
@@ -820,7 +864,7 @@
               <span style="font-size: 10px; color: #8d1459; font-weight: normal;">⚙ Cấu hình tại menu GET API</span>
             </div>
             <div class="mini-hint" style="margin-bottom: 8px;">Extension tự động đọc dữ liệu phòng khi bạn mở tab chi
-              tiết phòng. AI sẽ rút gọn địa chỉ (Đường + Quận), tạo giá và thêm liên hệ.</div>
+              tiết phòng (Lunaliving / Tyrahome). AI sẽ rút gọn địa chỉ (Đường + Quận), tạo giá và thêm liên hệ.</div>
 
             <button id="extractRoomBtn" type="button"
               style="margin-bottom: 0; background: linear-gradient(180deg, #ef4ba5 0%, #d52e8a 100%);">🔄 Đọc lại thông
@@ -851,6 +895,18 @@
               <button id="addRoomCommentBtn" type="button"
                 style="margin-bottom: 6px; background: linear-gradient(180deg, #388e3c 0%, #2e7d32 100%);">➕ Thêm vào
                 danh sách Comment</button>
+
+              <div
+                style="display: flex; align-items: center; justify-content: space-between; background: #fff; padding: 7px 10px; border: 1px solid #f4c5df; border-radius: 8px; margin-bottom: 8px;">
+                <label for="includeWebsiteLink"
+                  style="font-size: 11px; font-weight: 600; color: #7c305c; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none;">
+                  🌐 <span>Xem thêm nhiều phòng tại: <strong>https://Lunaliving.vn/</strong></span>
+                </label>
+                <label class="switch-toggle" style="margin-left: 8px;">
+                  <input type="checkbox" id="includeWebsiteLink">
+                  <span class="slider"></span>
+                </label>
+              </div>
 
               <div style="display: flex; gap: 6px; margin-bottom: 0;">
                 <button id="generateAiCaptionBtn" type="button"
@@ -988,6 +1044,18 @@
             style="margin-bottom: 0; flex: 1; min-width: 120px;">Xóa tất cả cmt</button>
         </div>
       </div>
+
+      <div class="container" style="margin-top: 12px;">
+        <div class="section-title">THÔNG TIN BẢN QUYỀN (VPS)</div>
+        <div class="hint" id="licenseDetails">Đang tải thông tin bản quyền...</div>
+        <div style="font-size: 11px; color: #744563; margin-top: 6px; word-break: break-all;" id="currentBrowserId">
+        </div>
+        <div class="button-group" style="margin-top: 10px; display: flex; gap: 8px;">
+          <button id="recheckLicenseBtn" type="button" style="margin-bottom: 0; flex: 1;">Kiểm tra lại key</button>
+          <button id="logoutLicenseBtn" type="button" class="clipboard-mini-btn clipboard-danger-btn"
+            style="margin-bottom: 0; flex: 1;">Đổi mật khẩu / Khóa</button>
+        </div>
+      </div>
     </div>
 
     <div id="getapiTab" class="tab-content">
@@ -1032,37 +1100,53 @@
               style="margin-bottom: 6px;">
           </div>
 
+          <div style="margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <label style="font-size: 11px; font-weight: bold; color: #7c305c; margin-bottom: 0;">Chèn link website vào
+                nội dung:</label>
+              <label class="switch-toggle">
+                <input type="checkbox" id="includeWebsiteLinkConfig">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <input type="text" id="websiteLinkText" placeholder="Xem thêm nhiều phòng tại: https://Lunaliving.vn/"
+              value="Xem thêm nhiều phòng tại: https://Lunaliving.vn/" style="margin-bottom: 6px; font-size: 11px;">
+          </div>
+
           <div style="font-size: 11px; font-weight: bold; color: #7c305c; margin-top: 8px; margin-bottom: 4px;">XPath
-            bóc tách dữ liệu:</div>
+            bóc tách dữ liệu (Hỗ trợ Lunaliving & Tyrahome):</div>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;">
             <div>
               <label style="font-size: 10px; color: #7c305c; font-weight: bold;">XPath Giá:</label>
-              <input type="text" id="xpathPrice" placeholder="//span[@class='price']"
+              <input type="text" id="xpathPrice" placeholder="//span[contains(text(),'đ/tháng')]"
                 style="font-size: 11px; margin-bottom: 0;">
             </div>
             <div>
               <label style="font-size: 10px; color: #7c305c; font-weight: bold;">XPath Địa chỉ:</label>
-              <input type="text" id="xpathAddress" placeholder="//div[@class='address']"
+              <input type="text" id="xpathAddress" placeholder="//span[contains(@class,'text-stone-400')]"
                 style="font-size: 11px; margin-bottom: 0;">
             </div>
             <div>
               <label style="font-size: 10px; color: #7c305c; font-weight: bold;">XPath Nội thất:</label>
-              <input type="text" id="xpathFurniture" placeholder="//div[@class='furniture']"
+              <input type="text" id="xpathFurniture"
+                placeholder="//div[contains(@class,'grid-cols-2')]//span[contains(@class,'truncate')]"
                 style="font-size: 11px; margin-bottom: 0;">
             </div>
             <div>
               <label style="font-size: 10px; color: #7c305c; font-weight: bold;">XPath Tiện ích:</label>
-              <input type="text" id="xpathUtilities" placeholder="//div[@class='utilities']"
+              <input type="text" id="xpathUtilities"
+                placeholder="//div[contains(@class,'flex-wrap')]//span[contains(@class,'inline-flex')]//span"
                 style="font-size: 11px; margin-bottom: 0;">
             </div>
             <div>
               <label style="font-size: 10px; color: #7c305c; font-weight: bold;">XPath Ảnh phòng:</label>
-              <input type="text" id="xpathImage" placeholder="//img[@class='room-img']"
+              <input type="text" id="xpathImage" placeholder="//img[@id='main-view-image']"
                 style="font-size: 11px; margin-bottom: 0;">
             </div>
             <div>
               <label style="font-size: 10px; color: #7c305c; font-weight: bold;">XPath Loại phòng:</label>
-              <input type="text" id="xpathRoomType" placeholder="//div[@class='room-type']"
+              <input type="text" id="xpathRoomType"
+                placeholder="//div[contains(@class,'flex-wrap')]//span[contains(@class,'rounded-full')][1]"
                 style="font-size: 11px; margin-bottom: 0;">
             </div>
           </div>
@@ -1102,6 +1186,7 @@
       </div>
     </div>
   </div>
+  <script src="auth-config.js"></script>
   <script src="popup.js"></script>
 </body>
 
